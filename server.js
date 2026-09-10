@@ -1,5 +1,7 @@
 import "dotenv/config";
 import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
 import { initSchema, pool } from "./src/db.js";
 import { getAuthUrl as getGoogleAuthUrl, handleOAuthCallback as handleGoogleCallback } from "./src/auth/google.js";
 import { getAuthUrl as getOutlookAuthUrl, handleOAuthCallback as handleOutlookCallback } from "./src/auth/outlook.js";
@@ -7,36 +9,110 @@ import { pollAllAccounts } from "./src/poller.js";
 import { bulkSortRecent } from "./src/bulkSort.js";
 import { checkAllFollowUps } from "./src/followUp.js";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, "public")));
 
-app.get("/", async (_req, res) => {
+// ---------- Shared page shell ----------
+
+function renderLayout({ title, activeAccountId, accounts, body }) {
+  const navLinks = accounts.length
+    ? accounts
+        .map(
+          (a) => `
+        <a href="/settings/${a.id}" class="account-link ${a.id === activeAccountId ? "active" : ""}">
+          <span class="account-dot ${a.provider}"></span>${a.email}
+        </a>`
+        )
+        .join("")
+    : `<div class="empty-note">No accounts yet</div>`;
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${title} · Inbox Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <a href="/" style="text-decoration:none;"><div class="wordmark">Inbox<br />Assistant</div></a>
+      <nav class="account-nav">
+        <div class="nav-label">Accounts</div>
+        ${navLinks}
+      </nav>
+      <div class="connect-links">
+        <div class="nav-label">Connect</div>
+        <a href="/auth/google" class="connect-link">+ Gmail account</a>
+        <a href="/auth/outlook" class="connect-link">+ Outlook account</a>
+      </div>
+    </aside>
+    <main class="main">
+      ${body}
+    </main>
+  </div>
+</body>
+</html>`;
+}
+
+async function getAccounts() {
   const { rows } = await pool.query(
     `SELECT id, email, provider FROM accounts ORDER BY created_at`
   );
-  const accountRows = rows
-    .map(
-      (a) =>
-        `<li>${a.email} (${a.provider}) — <a href="/settings/${a.id}">edit triage rules</a></li>`
-    )
-    .join("");
+  return rows;
+}
 
-  res.send(`
-    <h1>Inbox Assistant</h1>
-    <p><a href="/auth/google">Connect a Gmail account</a></p>
-    <p><a href="/auth/outlook">Connect an Outlook account</a></p>
-    <h2>Connected accounts</h2>
-    <ul>${accountRows || "<li>None yet</li>"}</ul>
-  `);
+// ---------- Home ----------
+
+app.get("/", async (_req, res) => {
+  const accounts = await getAccounts();
+
+  const rows = accounts.length
+    ? accounts
+        .map(
+          (a) => `
+        <div class="account-row">
+          <div class="account-row-main">
+            <span class="account-dot ${a.provider}"></span>
+            <span class="account-email">${a.email}</span>
+            <span class="provider-badge">${a.provider}</span>
+          </div>
+          <a href="/settings/${a.id}">Edit triage rules →</a>
+        </div>`
+        )
+        .join("")
+    : `<div class="empty-state">
+        No inboxes connected yet. Connect a
+        <a href="/auth/google">Gmail</a> or <a href="/auth/outlook">Outlook</a>
+        account to start triaging and drafting automatically.
+      </div>`;
+
+  const body = `
+    <h1>Connected accounts</h1>
+    <p class="subtitle">Each inbox sorts itself every 5 minutes — urgent mail stays put, everything else files itself away.</p>
+    <div class="account-list">${rows}</div>
+  `;
+
+  res.send(renderLayout({ title: "Accounts", activeAccountId: null, accounts, body }));
 });
 
-// Step 1: kick off OAuth
+// ---------- OAuth ----------
+
 app.get("/auth/google", (_req, res) => {
   res.redirect(getGoogleAuthUrl());
 });
 
-// Step 2: Google redirects back here with a code
 app.get("/auth/google/callback", async (req, res) => {
   try {
     const account = await handleGoogleCallback(req.query.code);
@@ -71,8 +147,8 @@ app.get("/auth/outlook/callback", async (req, res) => {
   }
 });
 
-// Manually trigger a poll of all connected accounts.
-// Protect with a shared secret so it's safe to call from an external cron (e.g. Render Cron Job).
+// ---------- Manual poll trigger ----------
+
 app.get("/poll", async (req, res) => {
   if (req.query.secret !== process.env.POLL_TRIGGER_SECRET) {
     return res.status(401).send("Unauthorized");
@@ -84,7 +160,17 @@ app.get("/poll", async (req, res) => {
 
 app.get("/health", (_req, res) => res.send("ok"));
 
+// ---------- Settings ----------
+
+const CATEGORIES = [
+  { key: "urgent", name: "Urgent / To Respond", desc: "Needs a reply — always stays visible and gets a draft" },
+  { key: "fyi", name: "FYI", desc: "Informational, no reply needed" },
+  { key: "marketing", name: "Marketing", desc: "Promotions, newsletters, sales emails" },
+  { key: "notifications", name: "Notifications", desc: "Automated system or app alerts" },
+];
+
 app.get("/settings/:id", async (req, res) => {
+  const accounts = await getAccounts();
   const { rows } = await pool.query(
     `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders,
             move_urgent, move_fyi, move_marketing, move_notifications
@@ -92,53 +178,86 @@ app.get("/settings/:id", async (req, res) => {
     [req.params.id]
   );
   const account = rows[0];
-  if (!account) return res.status(404).send("Account not found");
+  if (!account) {
+    return res
+      .status(404)
+      .send(renderLayout({ title: "Not found", activeAccountId: null, accounts, body: "<h1>Account not found</h1>" }));
+  }
 
-  const checkbox = (name, checked) =>
-    `<input type="checkbox" name="${name}" ${checked ? "checked" : ""}>`;
+  const categoryRows = CATEGORIES.map((cat) => {
+    const checked = account[`move_${cat.key}`];
+    return `
+      <div class="category-row">
+        <div class="category-label">
+          <span class="category-dot ${cat.key}"></span>
+          <div>
+            <div class="category-name">${cat.name}</div>
+            <div class="category-desc">${cat.desc}</div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <span class="category-state">${checked ? "Moved to folder" : "Stays in inbox"}</span>
+          <label class="toggle">
+            <input type="checkbox" name="move_${cat.key}" ${checked ? "checked" : ""} />
+            <span class="track"></span>
+            <span class="thumb"></span>
+          </label>
+        </div>
+      </div>`;
+  }).join("");
 
-  res.send(`
-    <h1>Triage rules for ${account.email}</h1>
-    ${req.query.saved ? "<p><strong>Saved.</strong></p>" : ""}
+  const body = `
+    <a href="/" class="eyebrow-link">← All accounts</a>
+    <h1>${account.email}</h1>
+    <p class="subtitle">${account.provider === "google" ? "Gmail" : "Outlook"} · triage and drafting rules for this inbox</p>
+
+    ${req.query.saved ? `<div class="saved-banner">Saved</div><br/>` : ""}
+
     <form method="POST" action="/settings/${account.id}">
-      <p>Write plain-language rules for how mail in this inbox should be classified.
-      These get folded into the classification prompt alongside the subject/sender/preview
-      of each email. Example: "Emails from clients or referring vets are always urgent.
-      Newsletters and marketing are always marketing. Anything mentioning an invoice is fyi."</p>
-      <textarea name="custom_instructions" rows="8" cols="80">${
-        account.custom_instructions ?? ""
-      }</textarea>
+      <div class="section">
+        <h2>Triage rules</h2>
+        <p class="section-help">
+          Plain-language rules for how mail here gets classified, folded into the
+          classification prompt alongside the subject, sender, and preview of each email.
+          Example: "Emails from clients or referring vets are always urgent. Newsletters and
+          marketing are always marketing. Anything mentioning an invoice is fyi."
+        </p>
+        <textarea name="custom_instructions" rows="6">${account.custom_instructions ?? ""}</textarea>
+      </div>
 
-      <h2>Writing tone / style</h2>
-      <p>How you like drafts written — separate from the triage rules above. This is folded
-      into the drafting prompt alongside your auto-learned voice profile. Example: "I'm concise
-      and direct. I'm a practice manager at Sandhills Animal Hospital. I sign off with 'Thanks, Sandy'."</p>
-      <textarea name="tone_instructions" rows="6" cols="80">${
-        account.tone_instructions ?? ""
-      }</textarea>
+      <div class="section">
+        <h2>Writing tone / style</h2>
+        <p class="section-help">
+          How you like drafts written, separate from the triage rules above — folded into the
+          drafting prompt alongside the auto-learned voice profile. Example: "I'm concise and
+          direct. I'm a practice manager at Sandhills Animal Hospital. I sign off with 'Thanks, Sandy'."
+        </p>
+        <textarea name="tone_instructions" rows="5">${account.tone_instructions ?? ""}</textarea>
+      </div>
 
-      <h2>Always draft for these senders</h2>
-      <p>One email or domain per line (e.g. <code>manager@sandhillsvet.com</code> or
-      <code>@keysupplier.com</code>). Mail from these senders always gets a draft, even if it
-      would otherwise be classified as fyi, marketing, or notifications.</p>
-      <textarea name="always_draft_senders" rows="4" cols="80">${
-        account.always_draft_senders ?? ""
-      }</textarea>
+      <div class="section">
+        <h2>Always draft for these senders</h2>
+        <p class="section-help">
+          One email or domain per line, e.g. <code>manager@sandhillsvet.com</code> or
+          <code>@keysupplier.com</code>. Mail from these senders always gets a draft, even if
+          it would otherwise be classified as fyi, marketing, or notifications.
+        </p>
+        <textarea name="always_draft_senders" rows="4">${account.always_draft_senders ?? ""}</textarea>
+      </div>
 
-      <h2>Move out of inbox</h2>
-      <p>For each category, choose whether matching mail should be moved into its own
-      folder (checked) or stay visible in the main inbox (unchecked) — like Fyxer's
-      "move out of my inbox" toggle. Only Urgent/To Respond mail gets a drafted reply.</p>
-      <p>${checkbox("move_urgent", account.move_urgent)} Urgent / To Respond</p>
-      <p>${checkbox("move_fyi", account.move_fyi)} FYI</p>
-      <p>${checkbox("move_marketing", account.move_marketing)} Marketing</p>
-      <p>${checkbox("move_notifications", account.move_notifications)} Notifications</p>
+      <div class="section">
+        <h2>Category routing</h2>
+        <p class="section-help">
+          Choose whether each category stays visible in the inbox or moves into its own folder.
+        </p>
+        ${categoryRows}
+      </div>
 
-      <br/>
-      <button type="submit">Save</button>
+      <button type="submit">Save changes</button>
     </form>
-    <p><a href="/">Back</a></p>
-  `);
+  `;
+
+  res.send(renderLayout({ title: account.email, activeAccountId: account.id, accounts, body }));
 });
 
 app.post("/settings/:id", async (req, res) => {
@@ -166,8 +285,6 @@ async function start() {
 
   app.listen(PORT, () => console.log(`Inbox Assistant listening on :${PORT}`));
 
-  // In-process scheduler as a fallback/primary trigger (in addition to, or instead of,
-  // an external Render Cron Job hitting /poll — see README).
   const intervalMs = (Number(process.env.POLL_INTERVAL_MINUTES) || 5) * 60 * 1000;
   setInterval(async () => {
     console.log("Polling all accounts...");
