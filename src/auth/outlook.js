@@ -16,6 +16,8 @@ export function getAuthUrl() {
     redirect_uri: process.env.MS_REDIRECT_URI,
     response_mode: "query",
     scope: SCOPES,
+    prompt: "select_account", // always show the account picker instead of silently
+                               // reusing whichever Microsoft account is already signed in
   });
   return `${AUTH_BASE}/authorize?${params.toString()}`;
 }
