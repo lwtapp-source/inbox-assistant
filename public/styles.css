@@ -552,6 +552,41 @@ button[type="submit"].link-button.danger:hover {
   color: var(--urgent);
 }
 
+/* ---------- Custom files ---------- */
+
+.file-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.file-row:first-child {
+  border-top: none;
+}
+
+.file-name {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.file-meta {
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  margin-top: 1px;
+}
+
+input[type="file"] {
+  font-size: 13.5px;
+  margin-right: 10px;
+}
+
 @media (max-width: 720px) {
   .app {
     flex-direction: column;
