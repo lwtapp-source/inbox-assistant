@@ -41,6 +41,18 @@ function shouldMove(account, label) {
   return account.move_low_priority;
 }
 
+// Matches Fyxer's "custom rule to guarantee drafts every time" for specific contacts —
+// account.always_draft_senders is a newline/comma-separated list of emails or domains.
+function isAlwaysDraftSender(fromHeader, alwaysDraftSenders) {
+  if (!alwaysDraftSenders?.trim() || !fromHeader) return false;
+  const from = fromHeader.toLowerCase();
+  const entries = alwaysDraftSenders
+    .split(/[\n,]/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return entries.some((entry) => from.includes(entry));
+}
+
 export async function pollAccount(account) {
   const provider = providerFor(account);
   const messageIds = await provider.listUnreadMessageIds(account);
@@ -73,11 +85,17 @@ export async function pollAccount(account) {
     }
 
     let draftCreated = false;
-    if (label !== "low_priority") {
+    const forceDraft = isAlwaysDraftSender(detail.from, account.always_draft_senders);
+    if (label === "urgent" || forceDraft) {
       const threadContext = provider.getThreadContext
         ? await provider.getThreadContext(account, detail)
         : [];
-      const replyText = await draftReply({ voiceProfile, incomingEmail: detail, threadContext });
+      const replyText = await draftReply({
+        voiceProfile,
+        incomingEmail: detail,
+        threadContext,
+        toneInstructions: account.tone_instructions,
+      });
       await provider.createDraftReply(account, { detail, body: replyText });
       draftCreated = true;
     }

@@ -19,6 +19,8 @@ export async function initSchema() {
       voice_profile TEXT,               -- cached summary of how this person writes
       voice_profile_updated_at TIMESTAMPTZ,
       custom_instructions TEXT,         -- free-text triage rules, folded into the classification prompt
+      tone_instructions TEXT,           -- free-text writing-style guidance, folded into the drafting prompt
+      always_draft_senders TEXT,        -- newline/comma-separated emails or domains that always get a draft
       move_urgent BOOLEAN DEFAULT false,       -- move "urgent"-labeled mail out of the inbox into a folder
       move_fyi BOOLEAN DEFAULT true,           -- move "fyi"-labeled mail out of the inbox into a folder
       move_low_priority BOOLEAN DEFAULT true,  -- move "low_priority"-labeled mail out of the inbox into a folder
@@ -26,6 +28,8 @@ export async function initSchema() {
     );
 
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS custom_instructions TEXT;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS tone_instructions TEXT;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS always_draft_senders TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_urgent BOOLEAN DEFAULT false;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_fyi BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_low_priority BOOLEAN DEFAULT true;

@@ -52,13 +52,19 @@ ${sample}`,
 // Drafts a reply in the account owner's voice. Never sends — output is saved as a draft.
 // threadContext, if provided, is an array of {from, body} for earlier messages in the
 // same thread (oldest first), giving the draft full conversation awareness.
-export async function draftReply({ voiceProfile, incomingEmail, threadContext }) {
+// toneInstructions is free-text writing-style guidance the person set explicitly
+// (separate from the auto-learned voice profile) — e.g. "I'm concise and direct."
+export async function draftReply({ voiceProfile, incomingEmail, threadContext, toneInstructions }) {
   const threadBlock =
     threadContext && threadContext.length
       ? `\nEARLIER MESSAGES IN THIS THREAD (oldest first):\n${threadContext
           .map((m) => `--- From: ${m.from} ---\n${m.body}`)
           .join("\n\n")}\n`
       : "";
+
+  const toneBlock = toneInstructions?.trim()
+    ? `\nThe inbox owner has given this explicit guidance on how they like to write — follow it:\n${toneInstructions.trim()}\n`
+    : "";
 
   const msg = await anthropic.messages.create({
     model: MODEL,
@@ -70,7 +76,7 @@ export async function draftReply({ voiceProfile, incomingEmail, threadContext })
 
 VOICE PROFILE:
 ${voiceProfile || "No profile yet — use a neutral, professional tone."}
-${threadBlock}
+${toneBlock}${threadBlock}
 EMAIL TO REPLY TO:
 From: ${incomingEmail.from}
 Subject: ${incomingEmail.subject}
