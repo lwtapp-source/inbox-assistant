@@ -76,5 +76,13 @@ export async function initSchema() {
       created_at TIMESTAMPTZ DEFAULT now(),
       UNIQUE(account_id, message_id)
     );
+
+    CREATE TABLE IF NOT EXISTS custom_files (
+      id SERIAL PRIMARY KEY,
+      account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+      filename TEXT NOT NULL,
+      content TEXT NOT NULL,            -- extracted plain text (PDFs are parsed on upload)
+      uploaded_at TIMESTAMPTZ DEFAULT now()
+    );
   `);
 }
