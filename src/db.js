@@ -21,6 +21,7 @@ export async function initSchema() {
       custom_instructions TEXT,         -- free-text triage rules, folded into the classification prompt
       tone_instructions TEXT,           -- free-text writing-style guidance, folded into the drafting prompt
       always_draft_senders TEXT,        -- newline/comma-separated emails or domains that always get a draft
+      signature TEXT,                   -- plain-text signature appended to every generated draft
       move_urgent BOOLEAN DEFAULT false,       -- move "urgent"-labeled mail out of the inbox into a folder
       move_fyi BOOLEAN DEFAULT true,           -- move "fyi"-labeled mail out of the inbox into a folder
       move_marketing BOOLEAN DEFAULT true,     -- move "marketing"-labeled mail out of the inbox into a folder
@@ -32,6 +33,7 @@ export async function initSchema() {
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS custom_instructions TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS tone_instructions TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS always_draft_senders TEXT;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS signature TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_urgent BOOLEAN DEFAULT false;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_fyi BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_marketing BOOLEAN DEFAULT true;
@@ -45,9 +47,22 @@ export async function initSchema() {
       message_id TEXT NOT NULL,
       label TEXT,                       -- urgent / fyi / low_priority
       draft_created BOOLEAN DEFAULT false,
+      subject TEXT,
+      from_address TEXT,
+      snippet TEXT,
+      web_link TEXT,
+      pinned BOOLEAN DEFAULT false,
+      done BOOLEAN DEFAULT false,
       processed_at TIMESTAMPTZ DEFAULT now(),
       UNIQUE(account_id, message_id)
     );
+
+    ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS subject TEXT;
+    ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS from_address TEXT;
+    ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS snippet TEXT;
+    ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS web_link TEXT;
+    ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS pinned BOOLEAN DEFAULT false;
+    ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS done BOOLEAN DEFAULT false;
 
     CREATE TABLE IF NOT EXISTS follow_ups (
       id SERIAL PRIMARY KEY,
