@@ -100,7 +100,7 @@ export async function getThreadContext(account, detail) {
 
 export async function getMessageDetail(account, id) {
   const params = new URLSearchParams({
-    $select: "subject,from,bodyPreview,body,conversationId,internetMessageId,webLink",
+    $select: "subject,from,bodyPreview,body,conversationId,internetMessageId,webLink,hasAttachments",
   });
   const m = await graphFetch(account, `/me/messages/${id}?${params}`);
   return {
@@ -111,8 +111,23 @@ export async function getMessageDetail(account, id) {
     conversationId: m.conversationId,
     messageIdHeader: m.internetMessageId,
     webLink: m.webLink ?? "",
+    hasAttachments: !!m.hasAttachments,
     _graphId: id,
   };
+}
+
+// Downloads any PDF attachments on a message. Only worth calling when hasAttachments is true.
+export async function getPdfAttachments(account, messageId) {
+  const data = await graphFetch(account, `/me/messages/${messageId}/attachments`);
+  const results = [];
+  for (const att of data.value ?? []) {
+    const name = att.name || "";
+    const isPdf = att.contentType === "application/pdf" || name.toLowerCase().endsWith(".pdf");
+    if (isPdf && att.contentBytes) {
+      results.push({ filename: name, buffer: Buffer.from(att.contentBytes, "base64") });
+    }
+  }
+  return results;
 }
 
 export async function applyLabel(account, id, labelName) {

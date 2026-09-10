@@ -338,7 +338,13 @@ ${body}`,
 
 // Pulls structured billing details from an email already classified as "invoices".
 // Returns nulls for anything it can't confidently find rather than guessing.
-export async function extractInvoiceDetails({ subject, from, snippet, body }) {
+export async function extractInvoiceDetails({ subject, from, snippet, body, attachmentText }) {
+  const attachmentBlock = attachmentText?.trim()
+    ? `\nTEXT EXTRACTED FROM A PDF ATTACHMENT ON THIS EMAIL — this is very likely where the
+real invoice details are (the email body is often just "see attached"), so prioritize
+this over the body text below when the two conflict:\n${attachmentText.trim()}\n`
+    : "";
+
   const msg = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 250,
@@ -349,9 +355,9 @@ export async function extractInvoiceDetails({ subject, from, snippet, body }) {
 only, no commentary, no markdown fences:
 {"vendor": "<company/sender name, or empty string>", "amount": <number, or null if not found>, "currency": "<3-letter code like USD, or empty string>", "dueDate": "<YYYY-MM-DD, or empty string if no due date is stated>", "invoiceNumber": "<invoice/reference number, or empty string>"}
 
-Only fill in fields you're actually confident about from the email — leave others empty/null
-rather than guessing.
-
+Only fill in fields you're actually confident about — leave others empty/null rather than
+guessing.
+${attachmentBlock}
 From: ${from}
 Subject: ${subject}
 Preview: ${snippet}

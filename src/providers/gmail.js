@@ -9,6 +9,20 @@ function extractPlainText(message) {
   return Buffer.from(data, "base64").toString("utf-8");
 }
 
+// Walks a message's MIME parts and returns [{filename, attachmentId}] for any PDF parts.
+// This costs nothing extra — the parts tree is already present on the full-format message
+// we fetch anyway; only downloading the actual bytes (getAttachmentBuffer) costs an API call.
+function findPdfAttachmentRefs(part, out = []) {
+  if (!part) return out;
+  const filename = part.filename || "";
+  const mimeType = part.mimeType || "";
+  if ((mimeType === "application/pdf" || filename.toLowerCase().endsWith(".pdf")) && part.body?.attachmentId) {
+    out.push({ filename, attachmentId: part.body.attachmentId });
+  }
+  (part.parts || []).forEach((p) => findPdfAttachmentRefs(p, out));
+  return out;
+}
+
 async function ensureLabel(gmail, accountId, name) {
   const cacheKey = `${accountId}:${name}`;
   if (labelIdCache.has(cacheKey)) return labelIdCache.get(cacheKey);
@@ -114,7 +128,20 @@ export async function getMessageDetail(account, id) {
     threadId: full.data.threadId,
     messageIdHeader: headers["message-id"],
     webLink: `https://mail.google.com/mail/u/0/#all/${full.data.id}`,
+    pdfAttachments: findPdfAttachmentRefs(full.data.payload),
   };
+}
+
+// Downloads one attachment's raw bytes given the refs returned in getMessageDetail.
+export async function getAttachmentBuffer(account, messageId, attachmentId) {
+  const gmail = gmailClientFor(account);
+  const { data } = await gmail.users.messages.attachments.get({
+    userId: "me",
+    messageId,
+    id: attachmentId,
+  });
+  const base64 = (data.data || "").replace(/-/g, "+").replace(/_/g, "/");
+  return Buffer.from(base64, "base64");
 }
 
 export async function applyLabel(account, id, labelName) {
