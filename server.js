@@ -84,7 +84,8 @@ app.get("/health", (_req, res) => res.send("ok"));
 
 app.get("/settings/:id", async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT id, email, provider, custom_instructions, move_urgent, move_fyi, move_low_priority
+    `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders,
+            move_urgent, move_fyi, move_low_priority
      FROM accounts WHERE id = $1`,
     [req.params.id]
   );
@@ -102,8 +103,24 @@ app.get("/settings/:id", async (req, res) => {
       These get folded into the classification prompt alongside the subject/sender/preview
       of each email. Example: "Emails from clients or referring vets are always urgent.
       Newsletters and marketing are always low_priority. Anything mentioning an invoice is fyi."</p>
-      <textarea name="custom_instructions" rows="10" cols="80">${
+      <textarea name="custom_instructions" rows="8" cols="80">${
         account.custom_instructions ?? ""
+      }</textarea>
+
+      <h2>Writing tone / style</h2>
+      <p>How you like drafts written — separate from the triage rules above. This is folded
+      into the drafting prompt alongside your auto-learned voice profile. Example: "I'm concise
+      and direct. I'm a practice manager at Sandhills Animal Hospital. I sign off with 'Thanks, Sandy'."</p>
+      <textarea name="tone_instructions" rows="6" cols="80">${
+        account.tone_instructions ?? ""
+      }</textarea>
+
+      <h2>Always draft for these senders</h2>
+      <p>One email or domain per line (e.g. <code>manager@sandhillsvet.com</code> or
+      <code>@keysupplier.com</code>). Mail from these senders always gets a draft, even if it
+      would otherwise be classified as fyi or low_priority.</p>
+      <textarea name="always_draft_senders" rows="4" cols="80">${
+        account.always_draft_senders ?? ""
       }</textarea>
 
       <h2>Move out of inbox</h2>
@@ -124,10 +141,13 @@ app.get("/settings/:id", async (req, res) => {
 app.post("/settings/:id", async (req, res) => {
   await pool.query(
     `UPDATE accounts
-     SET custom_instructions = $1, move_urgent = $2, move_fyi = $3, move_low_priority = $4
-     WHERE id = $5`,
+     SET custom_instructions = $1, tone_instructions = $2, always_draft_senders = $3,
+         move_urgent = $4, move_fyi = $5, move_low_priority = $6
+     WHERE id = $7`,
     [
       req.body.custom_instructions ?? "",
+      req.body.tone_instructions ?? "",
+      req.body.always_draft_senders ?? "",
       !!req.body.move_urgent,
       !!req.body.move_fyi,
       !!req.body.move_low_priority,
