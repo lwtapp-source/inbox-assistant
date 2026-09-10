@@ -2,6 +2,7 @@ import { pool } from "./db.js";
 import { classifyEmail, draftReply, buildVoiceProfile, needsScheduling } from "./ai.js";
 import { getCustomFilesContext } from "./customFiles.js";
 import { getAvailability, formatAvailabilityWindows } from "./scheduling.js";
+import { checkForAppointment } from "./appointments.js";
 import * as gmailProvider from "./providers/gmail.js";
 import * as outlookProvider from "./providers/outlook.js";
 
@@ -86,6 +87,10 @@ export async function pollAccount(account) {
 
     if (shouldMove(account, label) && provider.moveOutOfInbox) {
       await provider.moveOutOfInbox(account, id, label);
+    }
+
+    if (label !== "marketing") {
+      await checkForAppointment(account, detail, id);
     }
 
     let draftCreated = false;

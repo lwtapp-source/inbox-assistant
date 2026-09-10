@@ -427,7 +427,8 @@ app.get("/settings/:id", async (req, res) => {
   const { rows } = await pool.query(
     `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders, signature,
             learned_style_notes, timezone, work_start_hour, work_end_hour, notice_hours,
-            scheduling_days_ahead, move_urgent, move_fyi, move_marketing, move_notifications
+            scheduling_days_ahead, auto_calendar_events,
+            move_urgent, move_fyi, move_marketing, move_notifications
      FROM accounts WHERE id = $1`,
     [req.params.id]
   );
@@ -439,6 +440,12 @@ app.get("/settings/:id", async (req, res) => {
   }
 
   const customFiles = await listCustomFiles(account.id);
+
+  const { rows: detectedEvents } = await pool.query(
+    `SELECT id, title, start_time, location, calendar_event_id
+     FROM detected_events WHERE account_id = $1 ORDER BY start_time DESC LIMIT 20`,
+    [account.id]
+  );
 
   const categoryRows = CATEGORIES.map((cat) => {
     const checked = account[`move_${cat.key}`];
@@ -454,7 +461,7 @@ app.get("/settings/:id", async (req, res) => {
         <div style="display:flex; align-items:center; gap:12px;">
           <span class="category-state">${checked ? "Moved to folder" : "Stays in inbox"}</span>
           <label class="toggle">
-            <input type="checkbox" name="move_${cat.key}" ${checked ? "checked" : ""} />
+            <input type="checkbox" name="move_${cat.key}" ${checked ? "checked" : ""} data-on="Moved to folder" data-off="Stays in inbox" />
             <span class="track"></span>
             <span class="thumb"></span>
           </label>
@@ -536,9 +543,10 @@ app.get("/settings/:id", async (req, res) => {
         <h2>Scheduling</h2>
         <p class="section-help">
           When a reply needs a meeting time, Claude checks your real calendar and proposes
-          actual free times instead of guessing. Requires calendar access — if you connected
-          this account before this feature existed, you'll need to reconnect it once for the
-          calendar permission to take effect (use "Connect an ${account.provider === "google" ? "Gmail" : "Outlook"} account" again with the same address).
+          actual free times instead of guessing. Also requires calendar access — if you
+          connected this account before this feature existed (or before appointment
+          auto-detection below was added), you'll need to reconnect it once for the calendar
+          permission to take effect (use "Connect an ${account.provider === "google" ? "Gmail" : "Outlook"} account" again with the same address).
         </p>
         <p class="section-help" style="margin-top:14px;">Timezone (IANA name, e.g. America/New_York)</p>
         <input type="text" name="timezone" value="${account.timezone ?? "America/New_York"}"
@@ -558,6 +566,24 @@ app.get("/settings/:id", async (req, res) => {
         <p class="section-help" style="margin-top:14px;">How many days ahead to look for availability</p>
         <input type="number" name="scheduling_days_ahead" value="${account.scheduling_days_ahead ?? 7}" min="1" max="30"
           style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; width:70px;" />
+
+        <div class="category-row" style="margin-top:18px; border-top:1px solid var(--border); padding-top:16px;">
+          <div class="category-label">
+            <span class="category-dot" style="background:var(--follow-up);"></span>
+            <div>
+              <div class="category-name">Auto-add appointments to calendar</div>
+              <div class="category-desc">Detects confirmed appointments (doctor's visits, reservations, deliveries) in incoming mail and creates a real calendar event — only when confident</div>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:12px;">
+            <span class="category-state">${account.auto_calendar_events ? "On" : "Off"}</span>
+            <label class="toggle">
+              <input type="checkbox" name="auto_calendar_events" ${account.auto_calendar_events ? "checked" : ""} data-on="On" data-off="Off" />
+              <span class="track"></span>
+              <span class="thumb"></span>
+            </label>
+          </div>
+        </div>
       </div>
 
       <div class="section">
@@ -603,11 +629,44 @@ app.get("/settings/:id", async (req, res) => {
       }
     </div>
 
+    <div class="section">
+      <h2>Detected appointments</h2>
+      <p class="section-help">
+        Calendar events Claude has automatically created from confirmed appointment emails.
+        Delete here to remove it from both this list and your actual calendar.
+      </p>
+      <div class="file-list">
+        ${
+          detectedEvents.length
+            ? detectedEvents
+                .map(
+                  (e) => `
+              <div class="file-row">
+                <div>
+                  <div class="file-name">${e.title}</div>
+                  <div class="file-meta">${new Date(e.start_time).toLocaleString("en-US", {
+                    timeZone: account.timezone || "America/New_York",
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  })}${e.location ? " · " + e.location : ""}</div>
+                </div>
+                <form method="POST" action="/settings/${account.id}/events/${e.id}/delete">
+                  <button type="submit" class="link-button danger">Delete</button>
+                </form>
+              </div>`
+                )
+                .join("")
+            : `<p class="section-help" style="margin:0;">Nothing detected yet.</p>`
+        }
+      </div>
+    </div>
+
     <script>
       document.querySelectorAll('.toggle input[type=checkbox]').forEach((el) => {
         el.addEventListener('change', () => {
           const stateEl = el.closest('.category-row').querySelector('.category-state');
-          stateEl.textContent = el.checked ? 'Moved to folder' : 'Stays in inbox';
+          if (!stateEl) return;
+          stateEl.textContent = el.checked ? el.dataset.on : el.dataset.off;
         });
       });
     </script>
@@ -671,14 +730,38 @@ app.post("/settings/:id/learned-notes/clear", async (req, res) => {
   res.redirect(`/settings/${req.params.id}`);
 });
 
+app.post("/settings/:id/events/:eventId/delete", async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT * FROM detected_events WHERE id = $1 AND account_id = $2`,
+    [req.params.eventId, req.params.id]
+  );
+  const event = rows[0];
+  if (event?.calendar_event_id) {
+    const { rows: accountRows } = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [
+      req.params.id,
+    ]);
+    const account = accountRows[0];
+    const provider = account ? chatProviders[account.provider] : null;
+    if (provider?.deleteCalendarEvent) {
+      try {
+        await provider.deleteCalendarEvent(account, event.calendar_event_id);
+      } catch (err) {
+        console.error("Failed to delete calendar event:", err.message);
+      }
+    }
+  }
+  await pool.query(`DELETE FROM detected_events WHERE id = $1`, [req.params.eventId]);
+  res.redirect(`/settings/${req.params.id}`);
+});
+
 app.post("/settings/:id", async (req, res) => {
   await pool.query(
     `UPDATE accounts
      SET custom_instructions = $1, tone_instructions = $2, always_draft_senders = $3, signature = $4,
          timezone = $5, work_start_hour = $6, work_end_hour = $7, notice_hours = $8,
-         scheduling_days_ahead = $9,
-         move_urgent = $10, move_fyi = $11, move_marketing = $12, move_notifications = $13
-     WHERE id = $14`,
+         scheduling_days_ahead = $9, auto_calendar_events = $10,
+         move_urgent = $11, move_fyi = $12, move_marketing = $13, move_notifications = $14
+     WHERE id = $15`,
     [
       req.body.custom_instructions ?? "",
       req.body.tone_instructions ?? "",
@@ -689,6 +772,7 @@ app.post("/settings/:id", async (req, res) => {
       Number(req.body.work_end_hour) || 17,
       Number(req.body.notice_hours) || 24,
       Number(req.body.scheduling_days_ahead) || 7,
+      !!req.body.auto_calendar_events,
       !!req.body.move_urgent,
       !!req.body.move_fyi,
       !!req.body.move_marketing,

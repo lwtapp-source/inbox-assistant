@@ -7,7 +7,7 @@ const SCOPES = [
   "email",
   "https://graph.microsoft.com/User.Read",
   "https://graph.microsoft.com/Mail.ReadWrite", // read + create/modify drafts (NOT Mail.Send)
-  "https://graph.microsoft.com/Calendars.Read", // check availability for scheduling drafts
+  "https://graph.microsoft.com/Calendars.ReadWrite", // check availability + create events from appointment emails
 ].join(" ");
 
 export function getAuthUrl() {

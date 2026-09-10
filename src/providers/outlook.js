@@ -293,3 +293,24 @@ export async function getBusyEvents(account, timeMin, timeMax) {
     .filter((e) => e.showAs && e.showAs !== "free")
     .map((e) => ({ start: e.start?.dateTime + "Z", end: e.end?.dateTime + "Z" }));
 }
+
+// ---------- Appointment auto-detection: creating/removing calendar events ----------
+
+export async function createCalendarEvent(account, { title, startIso, endIso, location, description }) {
+  const stripZ = (iso) => iso.replace(/Z$/, "");
+  const event = await graphFetch(account, `/me/events`, {
+    method: "POST",
+    body: JSON.stringify({
+      subject: title,
+      start: { dateTime: stripZ(startIso), timeZone: "UTC" },
+      end: { dateTime: stripZ(endIso), timeZone: "UTC" },
+      location: location ? { displayName: location } : undefined,
+      body: description ? { contentType: "Text", content: description } : undefined,
+    }),
+  });
+  return { eventId: event.id };
+}
+
+export async function deleteCalendarEvent(account, eventId) {
+  await graphFetch(account, `/me/events/${eventId}`, { method: "DELETE" });
+}

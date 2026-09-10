@@ -319,3 +319,25 @@ export async function getBusyEvents(account, timeMin, timeMax) {
   const busy = data.calendars?.primary?.busy ?? [];
   return busy.map((b) => ({ start: b.start, end: b.end }));
 }
+
+// ---------- Appointment auto-detection: creating/removing calendar events ----------
+
+export async function createCalendarEvent(account, { title, startIso, endIso, location, description }) {
+  const calendar = calendarClientFor(account);
+  const { data } = await calendar.events.insert({
+    calendarId: "primary",
+    requestBody: {
+      summary: title,
+      location: location || undefined,
+      description: description || undefined,
+      start: { dateTime: startIso },
+      end: { dateTime: endIso },
+    },
+  });
+  return { eventId: data.id };
+}
+
+export async function deleteCalendarEvent(account, eventId) {
+  const calendar = calendarClientFor(account);
+  await calendar.events.delete({ calendarId: "primary", eventId });
+}

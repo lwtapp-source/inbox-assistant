@@ -288,3 +288,45 @@ Preview: ${snippet}`,
   });
   return msg.content[0]?.text?.trim().toLowerCase().startsWith("y");
 }
+
+// ---------- Appointment auto-detection ----------
+
+// Checks whether an email confirms a specific, real-world appointment/booking (doctor's
+// visit, reservation, delivery window) as opposed to a work meeting being arranged by
+// back-and-forth email, or a marketing "book now" CTA. Returns structured details only
+// when confident.
+export async function detectAppointment({ subject, from, snippet, body, referenceDate, timezone }) {
+  const msg = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 300,
+    messages: [
+      {
+        role: "user",
+        content: `Does this email confirm a specific real-world appointment, reservation, or
+booking with an exact date (e.g. a doctor's appointment, a haircut, a restaurant
+reservation, a delivery window, a car service)? This is NOT about work meetings being
+arranged by email back-and-forth, and NOT a marketing email that just mentions booking or
+appointments in passing — only a genuine confirmation of a specific booking that already
+has a fixed date.
+
+Today's date is ${referenceDate} (timezone: ${timezone}).
+
+Reply with JSON only, no commentary, no markdown fences:
+{"isAppointment": true or false, "confidence": "high" or "medium" or "low", "title": "<short event title>", "date": "<YYYY-MM-DD>", "startTime": "<HH:MM in 24h format, or empty string if no specific time is given>", "endTime": "<HH:MM in 24h format, or empty string>", "location": "<location, or empty string>"}
+
+From: ${from}
+Subject: ${subject}
+Preview: ${snippet}
+Body:
+${body}`,
+      },
+    ],
+  });
+  const text = msg.content[0]?.text ?? "{}";
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    return JSON.parse(jsonMatch ? jsonMatch[0] : text);
+  } catch {
+    return { isAppointment: false };
+  }
+}

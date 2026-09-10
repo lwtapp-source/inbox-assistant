@@ -7,7 +7,7 @@ const providers = {
 };
 
 // Converts a wall-clock date/time in a given IANA timezone to a UTC Date.
-function zonedTimeToUtc(year, month, day, hour, minute, timeZone) {
+export function zonedTimeToUtc(year, month, day, hour, minute, timeZone) {
   const guess = new Date(Date.UTC(year, month - 1, day, hour, minute));
   const dtf = new Intl.DateTimeFormat("en-US", {
     timeZone,

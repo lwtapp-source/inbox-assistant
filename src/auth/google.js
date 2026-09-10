@@ -5,6 +5,7 @@ const SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify", // read + label + create drafts (NOT auto-send)
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/calendar.readonly", // check availability for scheduling drafts
+  "https://www.googleapis.com/auth/calendar.events", // create events from appointment-style emails
 ];
 
 export function newOAuthClient() {

@@ -28,6 +28,7 @@ export async function initSchema() {
       work_end_hour INTEGER DEFAULT 17,
       notice_hours INTEGER DEFAULT 24,            -- minimum notice before a proposed slot
       scheduling_days_ahead INTEGER DEFAULT 7,    -- how many days out to look for availability
+      auto_calendar_events BOOLEAN DEFAULT true,  -- auto-create calendar events from appointment-style emails
       move_urgent BOOLEAN DEFAULT false,       -- move "urgent"-labeled mail out of the inbox into a folder
       move_fyi BOOLEAN DEFAULT true,           -- move "fyi"-labeled mail out of the inbox into a folder
       move_marketing BOOLEAN DEFAULT true,     -- move "marketing"-labeled mail out of the inbox into a folder
@@ -46,6 +47,7 @@ export async function initSchema() {
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS work_end_hour INTEGER DEFAULT 17;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS notice_hours INTEGER DEFAULT 24;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS scheduling_days_ahead INTEGER DEFAULT 7;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS auto_calendar_events BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_urgent BOOLEAN DEFAULT false;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_fyi BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_marketing BOOLEAN DEFAULT true;
@@ -106,6 +108,19 @@ export async function initSchema() {
       status TEXT NOT NULL DEFAULT 'pending', -- pending -> learned / resolved_unchanged / expired
       created_at TIMESTAMPTZ DEFAULT now(),
       UNIQUE(account_id, draft_message_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS detected_events (
+      id SERIAL PRIMARY KEY,
+      account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,         -- the source email
+      title TEXT NOT NULL,
+      start_time TIMESTAMPTZ NOT NULL,
+      end_time TIMESTAMPTZ NOT NULL,
+      location TEXT,
+      calendar_event_id TEXT,           -- id on the actual Google/Outlook calendar, for deletion
+      created_at TIMESTAMPTZ DEFAULT now(),
+      UNIQUE(account_id, message_id)
     );
   `);
 }
