@@ -226,7 +226,7 @@ app.get("/", async (req, res) => {
                     p.account_provider === "outlook"
                       ? p.web_link + (p.web_link.includes("?") ? "&" : "?") + "login_hint=" + encodeURIComponent(p.account_email)
                       : p.web_link
-                  }" target="_blank" rel="noopener">Open</a>`
+                  }">Open</a>`
                 : ""
             }
             ${
