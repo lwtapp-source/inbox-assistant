@@ -173,16 +173,31 @@ app.get("/", async (req, res) => {
   const accounts = await getAccounts();
   const showDone = req.query.view === "done";
 
-  const { rows: priorities } = await pool.query(
-    `SELECT pm.id, pm.subject, pm.from_address, pm.snippet, pm.web_link, pm.pinned,
-            a.email AS account_email
-     FROM processed_messages pm
-     JOIN accounts a ON a.id = pm.account_id
-     WHERE pm.label = 'urgent' AND pm.done = $1
-     ORDER BY ${showDone ? "pm.processed_at DESC" : "pm.pinned DESC, pm.processed_at DESC"}
-     LIMIT 50`,
-    [showDone]
-  );
+  // Which accounts to show priorities for. The filter form marks itself with
+  // "filtered=1" so we can tell "nothing checked" (show none) apart from "no filter
+  // form submitted at all, e.g. direct navigation to /" (show all).
+  const allAccountIds = accounts.map((a) => a.id);
+  let selectedAccountIds;
+  if (req.query.filtered) {
+    const raw = req.query.accounts;
+    const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    selectedAccountIds = list.map((s) => Number(s)).filter((n) => allAccountIds.includes(n));
+  } else {
+    selectedAccountIds = allAccountIds;
+  }
+
+  const { rows: priorities } = selectedAccountIds.length
+    ? await pool.query(
+        `SELECT pm.id, pm.subject, pm.from_address, pm.snippet, pm.web_link, pm.pinned,
+                a.email AS account_email
+         FROM processed_messages pm
+         JOIN accounts a ON a.id = pm.account_id
+         WHERE pm.label = 'urgent' AND pm.done = $1 AND pm.account_id = ANY($2)
+         ORDER BY ${showDone ? "pm.processed_at DESC" : "pm.pinned DESC, pm.processed_at DESC"}
+         LIMIT 50`,
+        [showDone, selectedAccountIds]
+      )
+    : { rows: [] };
 
   const priorityRows = priorities.length
     ? priorities
@@ -219,7 +234,11 @@ app.get("/", async (req, res) => {
         )
         .join("")
     : `<div class="empty-state" style="padding:20px 0;">${
-        showDone ? "No completed items yet." : "Nothing urgent waiting on you right now."
+        selectedAccountIds.length === 0
+          ? "No accounts selected — check at least one above."
+          : showDone
+          ? "No completed items yet."
+          : "Nothing urgent waiting on you right now."
       }</div>`;
 
   const rows = accounts.length
@@ -248,6 +267,27 @@ app.get("/", async (req, res) => {
       ${showDone ? "Urgent items you've marked done." : "Every urgent email across your connected inboxes, in one list."}
       ${showDone ? `<a href="/" style="margin-left:8px;">← Back to active</a>` : `<a href="/?view=done" style="margin-left:8px;">View completed →</a>`}
     </p>
+
+    ${
+      accounts.length > 1
+        ? `<form method="GET" action="/" id="account-filter-form" style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:18px;">
+             <input type="hidden" name="filtered" value="1" />
+             ${showDone ? `<input type="hidden" name="view" value="done" />` : ""}
+             ${accounts
+               .map(
+                 (a) => `
+               <label style="display:flex; align-items:center; gap:6px; font-size:13.5px; cursor:pointer;">
+                 <input type="checkbox" name="accounts" value="${a.id}" ${
+                   selectedAccountIds.includes(a.id) ? "checked" : ""
+                 } onchange="document.getElementById('account-filter-form').submit()" />
+                 <span class="account-dot ${a.provider}"></span>${a.email}
+               </label>`
+               )
+               .join("")}
+           </form>`
+        : ""
+    }
+
     <div class="priority-list">${priorityRows}</div>
 
     <div class="section" style="margin-top:12px;">
