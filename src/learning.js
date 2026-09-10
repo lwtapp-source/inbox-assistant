@@ -94,7 +94,7 @@ export async function checkDraftEdits(account) {
 }
 
 export async function checkAllDraftEdits() {
-  const { rows } = await pool.query(`SELECT * FROM accounts`);
+  const { rows } = await pool.query(`SELECT * FROM accounts WHERE active = true`);
   const results = [];
   for (const account of rows) {
     try {

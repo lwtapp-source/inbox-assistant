@@ -23,6 +23,7 @@ export async function initSchema() {
       always_draft_senders TEXT,        -- newline/comma-separated emails or domains that always get a draft
       signature TEXT,                   -- plain-text signature appended to every generated draft
       learned_style_notes TEXT,         -- auto-updated notes from comparing drafts to what was actually sent
+      active BOOLEAN DEFAULT true,      -- false = disconnected but data retained; skipped by polling
       timezone TEXT DEFAULT 'America/New_York',  -- IANA timezone used for availability
       work_start_hour INTEGER DEFAULT 9,          -- meeting hours window, 24h clock
       work_end_hour INTEGER DEFAULT 17,
@@ -42,6 +43,7 @@ export async function initSchema() {
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS always_draft_senders TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS signature TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS learned_style_notes TEXT;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS timezone TEXT DEFAULT 'America/New_York';
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS work_start_hour INTEGER DEFAULT 9;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS work_end_hour INTEGER DEFAULT 17;

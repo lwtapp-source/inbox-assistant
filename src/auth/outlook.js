@@ -49,7 +49,7 @@ export async function handleOAuthCallback(code) {
   await pool.query(
     `INSERT INTO accounts (provider, email, refresh_token)
      VALUES ('outlook', $1, $2)
-     ON CONFLICT (email) DO UPDATE SET refresh_token = EXCLUDED.refresh_token`,
+     ON CONFLICT (email) DO UPDATE SET refresh_token = EXCLUDED.refresh_token, active = true`,
     [email, tokens.refresh_token]
   );
 

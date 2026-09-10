@@ -162,7 +162,14 @@ function renderLayout({ title, activeAccountId, accounts, body }) {
 
 async function getAccounts() {
   const { rows } = await pool.query(
-    `SELECT id, email, provider FROM accounts ORDER BY created_at`
+    `SELECT id, email, provider FROM accounts WHERE active = true ORDER BY created_at`
+  );
+  return rows;
+}
+
+async function getDisconnectedAccounts() {
+  const { rows } = await pool.query(
+    `SELECT id, email, provider FROM accounts WHERE active = false ORDER BY created_at`
   );
   return rows;
 }
@@ -261,6 +268,35 @@ app.get("/", async (req, res) => {
         account to start triaging and drafting automatically.
       </div>`;
 
+  const disconnectedAccounts = await getDisconnectedAccounts();
+  const disconnectedSection = disconnectedAccounts.length
+    ? `<div class="section">
+        <h2>Disconnected accounts</h2>
+        <p class="section-help">
+          Not actively monitored, but their settings, files, and learned notes are still
+          saved.
+        </p>
+        <div class="account-list">
+          ${disconnectedAccounts
+            .map(
+              (a) => `
+            <div class="account-row">
+              <div class="account-row-main">
+                <span class="account-dot ${a.provider}"></span>
+                <span class="account-email">${a.email}</span>
+                <span class="provider-badge">${a.provider}</span>
+              </div>
+              <div style="display:flex; gap:16px;">
+                <a href="${a.provider === "google" ? "/auth/google" : "/auth/outlook"}">Reconnect →</a>
+                <a href="/settings/${a.id}">View settings →</a>
+              </div>
+            </div>`
+            )
+            .join("")}
+        </div>
+      </div>`
+    : "";
+
   const body = `
     <h1>${showDone ? "Completed" : "Top priorities"}</h1>
     <p class="subtitle">
@@ -294,6 +330,8 @@ app.get("/", async (req, res) => {
       <h2>Connected accounts</h2>
       <div class="account-list">${rows}</div>
     </div>
+
+    ${disconnectedSection}
   `;
 
   res.send(renderLayout({ title: "Home", activeAccountId: null, accounts, body }));
@@ -560,7 +598,7 @@ app.get("/settings/:id", async (req, res) => {
   const { rows } = await pool.query(
     `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders, signature,
             learned_style_notes, timezone, work_start_hour, work_end_hour, notice_hours,
-            scheduling_days_ahead, auto_calendar_events,
+            scheduling_days_ahead, auto_calendar_events, active,
             move_urgent, move_fyi, move_marketing, move_notifications
      FROM accounts WHERE id = $1`,
     [req.params.id]
@@ -796,24 +834,46 @@ app.get("/settings/:id", async (req, res) => {
 
     <div class="section" style="border-top:1px solid var(--border); padding-top:22px;">
       <h2 style="color:var(--urgent);">Disconnect this account</h2>
-      <p class="section-help">
-        Removes ${account.email} from Inbox Assistant and permanently deletes everything
-        stored about it here — triage rules, custom files, learned notes, tracked drafts,
-        detected appointments, all of it. This does not send anything or delete real email
-        or calendar events — it only stops Inbox Assistant from accessing this account.
-        To fully revoke access on ${account.provider === "google" ? "Google" : "Microsoft"}'s
-        side too, visit
-        <a href="${
-          account.provider === "google"
-            ? "https://myaccount.google.com/permissions"
-            : "https://account.live.com/consent/Manage"
-        }" target="_blank" rel="noopener">${account.provider === "google" ? "Google account permissions" : "Microsoft account permissions"}</a>
-        and remove Inbox Assistant there as well.
-      </p>
-      <form method="POST" action="/settings/${account.id}/disconnect"
-        onsubmit="return confirm('Disconnect ${account.email}? This deletes everything Inbox Assistant has stored about this account and cannot be undone.');">
-        <button type="submit" style="background:var(--urgent);">Disconnect ${account.email}</button>
-      </form>
+      ${
+        account.active
+          ? `<p class="section-help">
+              Stops Inbox Assistant from accessing ${account.email}. This does not send
+              anything or touch real email or calendar events — it only affects what Inbox
+              Assistant itself can see and do. To fully revoke access on
+              ${account.provider === "google" ? "Google" : "Microsoft"}'s side too, visit
+              <a href="${
+                account.provider === "google"
+                  ? "https://myaccount.google.com/permissions"
+                  : "https://account.live.com/consent/Manage"
+              }" target="_blank" rel="noopener">${account.provider === "google" ? "Google account permissions" : "Microsoft account permissions"}</a>
+              and remove Inbox Assistant there as well.
+            </p>
+            <form method="POST" action="/settings/${account.id}/disconnect" style="display:flex; gap:12px; flex-wrap:wrap;">
+              <button type="submit" name="mode" value="keep"
+                onclick="return confirm('Disconnect ${account.email}? Its settings and data will stay saved in case you reconnect.');">
+                Disconnect, keep data
+              </button>
+              <button type="submit" name="mode" value="delete" style="background:var(--urgent);"
+                onclick="return confirm('Disconnect ${account.email} and permanently delete everything stored about it? This cannot be undone.');">
+                Disconnect and delete everything
+              </button>
+            </form>`
+          : `<p class="section-help">
+              This account is already disconnected — its settings, files, and learned
+              notes are still saved. Reconnect to resume, or permanently delete
+              everything below.
+            </p>
+            <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+              <a href="${account.provider === "google" ? "/auth/google" : "/auth/outlook"}" class="button" style="background:var(--accent); color:#fff; padding:10px 20px; border-radius:var(--radius); text-decoration:none; font-weight:500; font-size:14px;">Reconnect ${account.email}</a>
+              <form method="POST" action="/settings/${account.id}/disconnect">
+                <input type="hidden" name="mode" value="delete" />
+                <button type="submit" style="background:var(--urgent);"
+                  onclick="return confirm('Permanently delete everything stored about ${account.email}? This cannot be undone.');">
+                  Permanently delete everything
+                </button>
+              </form>
+            </div>`
+      }
     </div>
 
     <script>
@@ -886,7 +946,14 @@ app.post("/settings/:id/learned-notes/clear", async (req, res) => {
 });
 
 app.post("/settings/:id/disconnect", async (req, res) => {
-  await pool.query(`DELETE FROM accounts WHERE id = $1`, [req.params.id]);
+  if (req.body.mode === "keep") {
+    await pool.query(
+      `UPDATE accounts SET active = false, refresh_token = '' WHERE id = $1`,
+      [req.params.id]
+    );
+  } else {
+    await pool.query(`DELETE FROM accounts WHERE id = $1`, [req.params.id]);
+  }
   res.redirect("/");
 });
 
