@@ -332,6 +332,22 @@ app.get("/", async (req, res) => {
     </div>
 
     ${disconnectedSection}
+
+    <script>
+      (function () {
+        var key = "topPrioritiesScroll";
+        var saved = sessionStorage.getItem(key);
+        if (saved !== null) {
+          window.scrollTo(0, parseInt(saved, 10));
+          sessionStorage.removeItem(key);
+        }
+        document.querySelectorAll(".priority-actions form").forEach(function (form) {
+          form.addEventListener("submit", function () {
+            sessionStorage.setItem(key, String(window.scrollY));
+          });
+        });
+      })();
+    </script>
   `;
 
   res.send(renderLayout({ title: "Home", activeAccountId: null, accounts, body }));
