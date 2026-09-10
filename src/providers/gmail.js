@@ -158,3 +158,49 @@ export async function listRecentSentBodies(account, limit = 40) {
   }
   return bodies.filter(Boolean);
 }
+
+// Sent messages with enough metadata to track whether they got a reply.
+export async function listRecentSentMessages(account, limit = 50) {
+  const gmail = gmailClientFor(account);
+  const { data } = await gmail.users.messages.list({
+    userId: "me",
+    labelIds: ["SENT"],
+    maxResults: limit,
+  });
+  const messages = [];
+  for (const m of data.messages ?? []) {
+    const full = await gmail.users.messages.get({
+      userId: "me",
+      id: m.id,
+      format: "metadata",
+      metadataHeaders: ["To", "Date"],
+    });
+    const headers = Object.fromEntries(
+      (full.data.payload?.headers ?? []).map((h) => [h.name.toLowerCase(), h.value])
+    );
+    messages.push({
+      id: full.data.id,
+      threadId: full.data.threadId,
+      to: headers.to ?? "",
+      sentAt: new Date(Number(full.data.internalDate)),
+    });
+  }
+  return messages;
+}
+
+// True if any message in the thread arrived after sentAt and wasn't sent by this account
+// (i.e. someone replied).
+export async function hasReceivedReply(account, threadId, sentAt) {
+  const gmail = gmailClientFor(account);
+  const { data } = await gmail.users.threads.get({
+    userId: "me",
+    id: threadId,
+    format: "metadata",
+    metadataHeaders: ["Date"],
+  });
+  return (data.messages ?? []).some((m) => {
+    const isIncoming = !(m.labelIds ?? []).includes("SENT");
+    const msgDate = new Date(Number(m.internalDate));
+    return isIncoming && msgDate > sentAt;
+  });
+}

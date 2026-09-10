@@ -143,3 +143,38 @@ export async function listRecentSentBodies(account, limit = 40) {
   const data = await graphFetch(account, `/me/mailFolders/sentitems/messages?${params}`);
   return (data.value ?? []).map((m) => m.body?.content).filter(Boolean);
 }
+
+// Sent messages with enough metadata to track whether they got a reply.
+export async function listRecentSentMessages(account, limit = 50) {
+  const params = new URLSearchParams({
+    $top: String(limit),
+    $orderby: "sentDateTime desc",
+    $select: "id,conversationId,toRecipients,sentDateTime",
+  });
+  const data = await graphFetch(account, `/me/mailFolders/sentitems/messages?${params}`);
+  return (data.value ?? []).map((m) => ({
+    id: m.id,
+    threadId: m.conversationId,
+    to: (m.toRecipients ?? [])
+      .map((r) => r.emailAddress?.address)
+      .filter(Boolean)
+      .join(", "),
+    sentAt: new Date(m.sentDateTime),
+  }));
+}
+
+// True if any message in the conversation arrived after sentAt from someone other than
+// this account (i.e. someone replied).
+export async function hasReceivedReply(account, conversationId, sentAt) {
+  const filterValue = conversationId.replace(/'/g, "''");
+  const params = new URLSearchParams({
+    $filter: `conversationId eq '${filterValue}'`,
+    $select: "from,receivedDateTime",
+  });
+  const data = await graphFetch(account, `/me/messages?${params}`);
+  return (data.value ?? []).some((m) => {
+    const from = m.from?.emailAddress?.address?.toLowerCase();
+    const receivedAt = m.receivedDateTime ? new Date(m.receivedDateTime) : null;
+    return from && from !== account.email.toLowerCase() && receivedAt && receivedAt > sentAt;
+  });
+}
