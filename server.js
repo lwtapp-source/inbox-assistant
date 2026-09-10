@@ -2,14 +2,18 @@ import "dotenv/config";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
+import multer from "multer";
+import pdfParse from "pdf-parse";
 import { initSchema, pool } from "./src/db.js";
 import { getAuthUrl as getGoogleAuthUrl, handleOAuthCallback as handleGoogleCallback } from "./src/auth/google.js";
 import { getAuthUrl as getOutlookAuthUrl, handleOAuthCallback as handleOutlookCallback } from "./src/auth/outlook.js";
 import { pollAllAccounts } from "./src/poller.js";
 import { bulkSortRecent } from "./src/bulkSort.js";
 import { checkAllFollowUps } from "./src/followUp.js";
+import { listCustomFiles } from "./src/customFiles.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -249,6 +253,8 @@ app.get("/settings/:id", async (req, res) => {
       .send(renderLayout({ title: "Not found", activeAccountId: null, accounts, body: "<h1>Account not found</h1>" }));
   }
 
+  const customFiles = await listCustomFiles(account.id);
+
   const categoryRows = CATEGORIES.map((cat) => {
     const checked = account[`move_${cat.key}`];
     return `
@@ -271,12 +277,33 @@ app.get("/settings/:id", async (req, res) => {
       </div>`;
   }).join("");
 
+  const customFileRows = customFiles.length
+    ? customFiles
+        .map(
+          (f) => `
+        <div class="file-row">
+          <div>
+            <div class="file-name">${f.filename}</div>
+            <div class="file-meta">${f.content_length.toLocaleString()} characters · uploaded ${new Date(
+              f.uploaded_at
+            ).toLocaleDateString()}</div>
+          </div>
+          <form method="POST" action="/settings/${account.id}/files/${f.id}/delete">
+            <button type="submit" class="link-button danger">Delete</button>
+          </form>
+        </div>`
+        )
+        .join("")
+    : `<p class="section-help" style="margin:0;">No files uploaded yet.</p>`;
+
   const body = `
     <a href="/" class="eyebrow-link">← All accounts</a>
     <h1>${account.email}</h1>
     <p class="subtitle">${account.provider === "google" ? "Gmail" : "Outlook"} · triage and drafting rules for this inbox</p>
 
     ${req.query.saved ? `<div class="saved-banner">Saved</div><br/>` : ""}
+    ${req.query.uploaded ? `<div class="saved-banner">File uploaded</div><br/>` : ""}
+    ${req.query.upload_error ? `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">${req.query.upload_error}</div><br/>` : ""}
 
     <form method="POST" action="/settings/${account.id}">
       <div class="section">
@@ -331,6 +358,20 @@ app.get("/settings/:id", async (req, res) => {
       <button type="submit">Save changes</button>
     </form>
 
+    <div class="section">
+      <h2>Custom files</h2>
+      <p class="section-help">
+        Upload reference material — a client list, brand guidelines, an FAQ, a company
+        overview — for Claude to draw on when writing drafts. Accepts .txt, .csv, and .pdf,
+        up to 5MB each.
+      </p>
+      <div class="file-list">${customFileRows}</div>
+      <form method="POST" action="/settings/${account.id}/files" enctype="multipart/form-data" style="margin-top:12px;">
+        <input type="file" name="file" accept=".txt,.csv,.pdf" required />
+        <button type="submit">Upload file</button>
+      </form>
+    </div>
+
     <script>
       document.querySelectorAll('.toggle input[type=checkbox]').forEach((el) => {
         el.addEventListener('change', () => {
@@ -342,6 +383,54 @@ app.get("/settings/:id", async (req, res) => {
   `;
 
   res.send(renderLayout({ title: account.email, activeAccountId: account.id, accounts, body }));
+});
+
+app.post("/settings/:id/files", upload.single("file"), async (req, res) => {
+  const accountId = req.params.id;
+  const file = req.file;
+  if (!file) return res.redirect(`/settings/${accountId}`);
+
+  const ext = path.extname(file.originalname).toLowerCase();
+  let text = "";
+
+  try {
+    if (ext === ".pdf") {
+      const parsed = await pdfParse(file.buffer);
+      text = parsed.text;
+    } else if (ext === ".txt" || ext === ".csv") {
+      text = file.buffer.toString("utf8");
+    } else {
+      return res.redirect(
+        `/settings/${accountId}?upload_error=${encodeURIComponent("Only .txt, .csv, and .pdf files are supported")}`
+      );
+    }
+  } catch (err) {
+    console.error("File parse failed:", err.message);
+    return res.redirect(
+      `/settings/${accountId}?upload_error=${encodeURIComponent("Couldn't read that file: " + err.message)}`
+    );
+  }
+
+  if (!text.trim()) {
+    return res.redirect(
+      `/settings/${accountId}?upload_error=${encodeURIComponent("No readable text found in that file")}`
+    );
+  }
+
+  await pool.query(
+    `INSERT INTO custom_files (account_id, filename, content) VALUES ($1, $2, $3)`,
+    [accountId, file.originalname, text]
+  );
+
+  res.redirect(`/settings/${accountId}?uploaded=1`);
+});
+
+app.post("/settings/:id/files/:fileId/delete", async (req, res) => {
+  await pool.query(`DELETE FROM custom_files WHERE id = $1 AND account_id = $2`, [
+    req.params.fileId,
+    req.params.id,
+  ]);
+  res.redirect(`/settings/${req.params.id}`);
 });
 
 app.post("/settings/:id", async (req, res) => {
