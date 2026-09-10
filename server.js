@@ -169,17 +169,19 @@ async function getAccounts() {
 
 // ---------- Home ----------
 
-app.get("/", async (_req, res) => {
+app.get("/", async (req, res) => {
   const accounts = await getAccounts();
+  const showDone = req.query.view === "done";
 
   const { rows: priorities } = await pool.query(
     `SELECT pm.id, pm.subject, pm.from_address, pm.snippet, pm.web_link, pm.pinned,
             a.email AS account_email
      FROM processed_messages pm
      JOIN accounts a ON a.id = pm.account_id
-     WHERE pm.label = 'urgent' AND pm.done = false
-     ORDER BY pm.pinned DESC, pm.processed_at DESC
-     LIMIT 50`
+     WHERE pm.label = 'urgent' AND pm.done = $1
+     ORDER BY ${showDone ? "pm.processed_at DESC" : "pm.pinned DESC, pm.processed_at DESC"}
+     LIMIT 50`,
+    [showDone]
   );
 
   const priorityRows = priorities.length
@@ -197,12 +199,18 @@ app.get("/", async (_req, res) => {
           </div>
           <div class="priority-actions">
             ${p.web_link ? `<a href="${p.web_link}" target="_blank" rel="noopener">Open</a>` : ""}
-            <form method="POST" action="/priorities/${p.id}/pin" style="display:inline;">
-              <button type="submit" class="link-button">${p.pinned ? "Unpin" : "Pin"}</button>
-            </form>
-            <form method="POST" action="/priorities/${p.id}/done" style="display:inline;">
-              <button type="submit" class="link-button">Done</button>
-            </form>
+            ${
+              showDone
+                ? `<form method="POST" action="/priorities/${p.id}/undone" style="display:inline;">
+                     <button type="submit" class="link-button">Undo</button>
+                   </form>`
+                : `<form method="POST" action="/priorities/${p.id}/pin" style="display:inline;">
+                     <button type="submit" class="link-button">${p.pinned ? "Unpin" : "Pin"}</button>
+                   </form>
+                   <form method="POST" action="/priorities/${p.id}/done" style="display:inline;">
+                     <button type="submit" class="link-button">Done</button>
+                   </form>`
+            }
             <form method="POST" action="/priorities/${p.id}/delete" style="display:inline;">
               <button type="submit" class="link-button danger">Delete</button>
             </form>
@@ -210,7 +218,9 @@ app.get("/", async (_req, res) => {
         </div>`
         )
         .join("")
-    : `<div class="empty-state" style="padding:20px 0;">Nothing urgent waiting on you right now.</div>`;
+    : `<div class="empty-state" style="padding:20px 0;">${
+        showDone ? "No completed items yet." : "Nothing urgent waiting on you right now."
+      }</div>`;
 
   const rows = accounts.length
     ? accounts
@@ -233,8 +243,11 @@ app.get("/", async (_req, res) => {
       </div>`;
 
   const body = `
-    <h1>Top priorities</h1>
-    <p class="subtitle">Every urgent email across your connected inboxes, in one list.</p>
+    <h1>${showDone ? "Completed" : "Top priorities"}</h1>
+    <p class="subtitle">
+      ${showDone ? "Urgent items you've marked done." : "Every urgent email across your connected inboxes, in one list."}
+      ${showDone ? `<a href="/" style="margin-left:8px;">← Back to active</a>` : `<a href="/?view=done" style="margin-left:8px;">View completed →</a>`}
+    </p>
     <div class="priority-list">${priorityRows}</div>
 
     <div class="section" style="margin-top:12px;">
@@ -250,6 +263,11 @@ app.get("/", async (_req, res) => {
 
 app.post("/priorities/:id/done", async (req, res) => {
   await pool.query(`UPDATE processed_messages SET done = true WHERE id = $1`, [req.params.id]);
+  res.redirect("/");
+});
+
+app.post("/priorities/:id/undone", async (req, res) => {
+  await pool.query(`UPDATE processed_messages SET done = false WHERE id = $1`, [req.params.id]);
   res.redirect("/");
 });
 
