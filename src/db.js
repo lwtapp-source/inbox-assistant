@@ -1,0 +1,34 @@
+import pg from "pg";
+
+const { Pool } = pg;
+
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL?.includes("localhost")
+    ? false
+    : { rejectUnauthorized: false },
+});
+
+export async function initSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id SERIAL PRIMARY KEY,
+      provider TEXT NOT NULL DEFAULT 'google',
+      email TEXT UNIQUE NOT NULL,
+      refresh_token TEXT NOT NULL,
+      voice_profile TEXT,               -- cached summary of how this person writes
+      voice_profile_updated_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS processed_messages (
+      id SERIAL PRIMARY KEY,
+      account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      label TEXT,                       -- urgent / fyi / low_priority
+      draft_created BOOLEAN DEFAULT false,
+      processed_at TIMESTAMPTZ DEFAULT now(),
+      UNIQUE(account_id, message_id)
+    );
+  `);
+}
