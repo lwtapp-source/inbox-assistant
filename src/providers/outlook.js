@@ -179,3 +179,78 @@ export async function hasReceivedReply(account, conversationId, sentAt) {
     return from && from !== account.email.toLowerCase() && receivedAt && receivedAt > sentAt;
   });
 }
+
+// Lists every top-level mail folder with item counts — used by the /diagnostics page to
+// verify server-side what Graph actually reports, independent of what the client shows.
+export async function listAllFolders(account) {
+  const params = new URLSearchParams({
+    $top: "100",
+    $select: "displayName,totalItemCount,unreadItemCount",
+  });
+  const data = await graphFetch(account, `/me/mailFolders?${params}`);
+  return (data.value ?? []).map((f) => ({
+    name: f.displayName,
+    total: f.totalItemCount,
+    unread: f.unreadItemCount,
+  }));
+}
+
+// ---------- Chat: search / draft-from-scratch ----------
+
+// Searches the mailbox using Graph's $search.
+export async function searchMessages(account, query, limit = 8) {
+  const params = new URLSearchParams({
+    $search: `"${query.replace(/"/g, "")}"`,
+    $top: String(limit),
+    $select: "id,subject,from,bodyPreview,receivedDateTime,webLink",
+  });
+  const data = await graphFetch(account, `/me/messages?${params}`, {
+    headers: { ConsistencyLevel: "eventual" },
+  });
+  return (data.value ?? []).map((m) => ({
+    id: m.id,
+    from: m.from?.emailAddress?.address ?? "",
+    subject: m.subject ?? "",
+    date: m.receivedDateTime ?? "",
+    snippet: m.bodyPreview ?? "",
+    webLink: m.webLink ?? "",
+  }));
+}
+
+// Finds an email address for a name by searching mail exchanged with them.
+// Returns null if nothing matches or the name is ambiguous (multiple candidates).
+export async function findEmailAddressForName(account, name) {
+  const params = new URLSearchParams({
+    $search: `"${name.replace(/"/g, "")}"`,
+    $top: "5",
+    $select: "from,toRecipients",
+  });
+  const data = await graphFetch(account, `/me/messages?${params}`, {
+    headers: { ConsistencyLevel: "eventual" },
+  });
+  const addresses = new Set();
+  for (const m of data.value ?? []) {
+    const from = m.from?.emailAddress;
+    if (from?.name?.toLowerCase().includes(name.toLowerCase())) addresses.add(from.address);
+    for (const r of m.toRecipients ?? []) {
+      if (r.emailAddress?.name?.toLowerCase().includes(name.toLowerCase())) {
+        addresses.add(r.emailAddress.address);
+      }
+    }
+  }
+  const list = [...addresses];
+  return list.length === 1 ? list[0] : null;
+}
+
+// Creates a brand-new draft (not a reply to anything) with the given recipient/subject/body.
+export async function createNewDraft(account, { to, subject, body }) {
+  const draft = await graphFetch(account, `/me/messages`, {
+    method: "POST",
+    body: JSON.stringify({
+      subject,
+      body: { contentType: "Text", content: body },
+      toRecipients: [{ emailAddress: { address: to } }],
+    }),
+  });
+  return { webLink: draft.webLink ?? "" };
+}

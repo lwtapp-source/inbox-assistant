@@ -205,3 +205,78 @@ export async function hasReceivedReply(account, threadId, sentAt) {
     return isIncoming && msgDate > sentAt;
   });
 }
+
+// ---------- Chat: search / draft-from-scratch ----------
+
+// Searches the mailbox using Gmail search syntax (also handles plain-text queries reasonably).
+export async function searchMessages(account, query, limit = 8) {
+  const gmail = gmailClientFor(account);
+  const { data } = await gmail.users.messages.list({ userId: "me", q: query, maxResults: limit });
+  const results = [];
+  for (const m of data.messages ?? []) {
+    const full = await gmail.users.messages.get({
+      userId: "me",
+      id: m.id,
+      format: "metadata",
+      metadataHeaders: ["From", "Subject", "Date"],
+    });
+    const headers = Object.fromEntries(
+      (full.data.payload?.headers ?? []).map((h) => [h.name.toLowerCase(), h.value])
+    );
+    results.push({
+      id: full.data.id,
+      from: headers.from ?? "",
+      subject: headers.subject ?? "",
+      date: headers.date ?? "",
+      snippet: full.data.snippet ?? "",
+      webLink: `https://mail.google.com/mail/u/0/#all/${full.data.id}`,
+    });
+  }
+  return results;
+}
+
+// Finds an email address for a name by searching mail exchanged with them.
+// Returns null if nothing matches or the name is ambiguous (multiple candidates).
+export async function findEmailAddressForName(account, name) {
+  const gmail = gmailClientFor(account);
+  const { data } = await gmail.users.messages.list({ userId: "me", q: name, maxResults: 5 });
+  const addresses = new Set();
+  for (const m of data.messages ?? []) {
+    const full = await gmail.users.messages.get({
+      userId: "me",
+      id: m.id,
+      format: "metadata",
+      metadataHeaders: ["From", "To"],
+    });
+    const headers = Object.fromEntries(
+      (full.data.payload?.headers ?? []).map((h) => [h.name.toLowerCase(), h.value])
+    );
+    for (const field of [headers.from, headers.to]) {
+      if (field && field.toLowerCase().includes(name.toLowerCase())) {
+        const match = field.match(/<([^>]+)>/);
+        addresses.add(match ? match[1] : field.trim());
+      }
+    }
+  }
+  const list = [...addresses];
+  return list.length === 1 ? list[0] : null;
+}
+
+// Creates a brand-new draft (not a reply to anything) with the given recipient/subject/body.
+export async function createNewDraft(account, { to, subject, body }) {
+  const gmail = gmailClientFor(account);
+  const lines = [
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    `Content-Type: text/plain; charset="UTF-8"`,
+    "",
+    body,
+  ];
+  const raw = Buffer.from(lines.join("\r\n"))
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  await gmail.users.drafts.create({ userId: "me", requestBody: { message: { raw } } });
+  return { webLink: "https://mail.google.com/mail/u/0/#drafts" };
+}

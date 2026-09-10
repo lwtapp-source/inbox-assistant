@@ -40,7 +40,8 @@ export async function handleOAuthCallback(code) {
     [data.email, tokens.refresh_token]
   );
 
-  return data.email;
+  const { rows } = await pool.query(`SELECT * FROM accounts WHERE email = $1`, [data.email]);
+  return rows[0];
 }
 
 // Returns an authenticated Gmail API client for a stored account row

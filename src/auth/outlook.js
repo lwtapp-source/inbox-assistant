@@ -52,7 +52,8 @@ export async function handleOAuthCallback(code) {
     [email, tokens.refresh_token]
   );
 
-  return email;
+  const { rows } = await pool.query(`SELECT * FROM accounts WHERE email = $1`, [email]);
+  return rows[0];
 }
 
 // Exchanges the stored refresh_token for a fresh access_token.

@@ -10,7 +10,17 @@ import { getAuthUrl as getOutlookAuthUrl, handleOAuthCallback as handleOutlookCa
 import { pollAllAccounts } from "./src/poller.js";
 import { bulkSortRecent } from "./src/bulkSort.js";
 import { checkAllFollowUps } from "./src/followUp.js";
-import { listCustomFiles } from "./src/customFiles.js";
+import { listCustomFiles, getCustomFilesContext } from "./src/customFiles.js";
+import {
+  classifyChatIntent,
+  extractDraftRequest,
+  answerFromSearch,
+  draftFromScratch,
+} from "./src/ai.js";
+import * as gmailProvider from "./src/providers/gmail.js";
+import * as outlookProvider from "./src/providers/outlook.js";
+
+const chatProviders = { google: gmailProvider, outlook: outlookProvider };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
@@ -52,6 +62,10 @@ function renderLayout({ title, activeAccountId, accounts, body }) {
   <div class="app">
     <aside class="sidebar">
       <a href="/" style="text-decoration:none;"><div class="wordmark">Inbox<br />Assistant</div></a>
+      <nav class="account-nav">
+        <div class="nav-label">Tools</div>
+        <a href="/chat" class="account-link">💬 Chat</a>
+      </nav>
       <nav class="account-nav">
         <div class="nav-label">Accounts</div>
         ${navLinks}
@@ -175,6 +189,173 @@ app.post("/priorities/:id/delete", async (req, res) => {
   await pool.query(`DELETE FROM processed_messages WHERE id = $1`, [req.params.id]);
   res.redirect("/");
 });
+
+// ---------- Chat (inbox search + draft-from-scratch) ----------
+
+app.get("/chat", async (req, res) => {
+  const accounts = await getAccounts();
+  const body = renderChatPage({ accounts, selectedAccountId: null, result: null });
+  res.send(renderLayout({ title: "Chat", activeAccountId: null, accounts, body }));
+});
+
+app.post("/chat", async (req, res) => {
+  const accounts = await getAccounts();
+  const accountId = req.body.account_id;
+  const message = (req.body.message ?? "").trim();
+
+  const { rows } = await pool.query(
+    `SELECT * FROM accounts WHERE id = $1`,
+    [accountId]
+  );
+  const account = rows[0];
+  const provider = account ? chatProviders[account.provider] : null;
+
+  let result = null;
+
+  if (!account || !provider || !message) {
+    result = { error: "Pick an account and enter a question or request." };
+  } else {
+    try {
+      const intent = await classifyChatIntent(message);
+
+      if (intent === "search") {
+        const searchResults = provider.searchMessages
+          ? await provider.searchMessages(account, message, 8)
+          : [];
+        const answer = await answerFromSearch({ question: message, results: searchResults });
+        result = { type: "search", answer, sources: searchResults };
+      } else {
+        const extracted = await extractDraftRequest(message);
+        let to = extracted.recipientName?.trim() ?? "";
+
+        if (to && !to.includes("@") && provider.findEmailAddressForName) {
+          const resolved = await provider.findEmailAddressForName(account, to);
+          if (!resolved) {
+            result = {
+              type: "draft_needs_clarification",
+              recipientName: to,
+            };
+          } else {
+            to = resolved;
+          }
+        }
+
+        if (!result) {
+          if (!to || !to.includes("@")) {
+            result = { type: "draft_needs_clarification", recipientName: to };
+          } else {
+            const filesContext = await getCustomFilesContext(account.id);
+            const bodyText = await draftFromScratch({
+              voiceProfile: account.voice_profile,
+              toneInstructions: account.tone_instructions,
+              filesContext,
+              instructions: extracted.instructions || message,
+            });
+            const finalBody = account.signature?.trim()
+              ? `${bodyText}\n\n${account.signature.trim()}`
+              : bodyText;
+            const created = await provider.createNewDraft(account, {
+              to,
+              subject: extracted.subject || "(no subject)",
+              body: finalBody,
+            });
+            result = {
+              type: "draft_created",
+              to,
+              subject: extracted.subject || "(no subject)",
+              body: finalBody,
+              webLink: created.webLink,
+            };
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Chat request failed:", err);
+      result = { error: "Something went wrong: " + err.message };
+    }
+  }
+
+  const body = renderChatPage({ accounts, selectedAccountId: accountId, message, result });
+  res.send(renderLayout({ title: "Chat", activeAccountId: null, accounts, body }));
+});
+
+function renderChatPage({ accounts, selectedAccountId, message, result }) {
+  const accountOptions = accounts
+    .map(
+      (a) =>
+        `<option value="${a.id}" ${String(a.id) === String(selectedAccountId) ? "selected" : ""}>${a.email}</option>`
+    )
+    .join("");
+
+  let resultHtml = "";
+  if (result?.error) {
+    resultHtml = `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">${result.error}</div>`;
+  } else if (result?.type === "search") {
+    const sourceRows = result.sources
+      .map(
+        (s, i) => `
+        <div class="file-row">
+          <div>
+            <div class="file-name">[${i + 1}] ${s.subject || "(no subject)"}</div>
+            <div class="file-meta">${s.from} · ${s.date}</div>
+          </div>
+          ${s.webLink ? `<a href="${s.webLink}" target="_blank" rel="noopener">Open</a>` : ""}
+        </div>`
+      )
+      .join("");
+    resultHtml = `
+      <div class="section">
+        <h2>Answer</h2>
+        <p style="white-space:pre-wrap;">${result.answer}</p>
+        ${result.sources.length ? `<h2 style="margin-top:18px;">Sources</h2><div class="file-list">${sourceRows}</div>` : ""}
+      </div>`;
+  } else if (result?.type === "draft_needs_clarification") {
+    resultHtml = `
+      <div class="section">
+        <h2>Need a bit more detail</h2>
+        <p class="section-help">
+          I couldn't find a clear, unambiguous email address for
+          ${result.recipientName ? `"${result.recipientName}"` : "the recipient"}.
+          Try again with their full email address included, e.g. "Draft an email to
+          thomas@example.com about the property viewing on Monday."
+        </p>
+      </div>`;
+  } else if (result?.type === "draft_created") {
+    resultHtml = `
+      <div class="section">
+        <h2>Draft created</h2>
+        <p class="section-help">To: ${result.to} · Subject: ${result.subject}</p>
+        <p style="white-space:pre-wrap; border:1px solid var(--border); border-radius:var(--radius); padding:14px; background:var(--surface);">${result.body}</p>
+        ${result.webLink ? `<p><a href="${result.webLink}" target="_blank" rel="noopener">Open Drafts →</a></p>` : ""}
+      </div>`;
+  }
+
+  return `
+    <h1>Chat</h1>
+    <p class="subtitle">Ask a question about an inbox, or ask for a new email to be drafted from scratch.</p>
+
+    <form method="POST" action="/chat">
+      <div class="section" style="padding-top:0; border-top:none;">
+        <h2>Which inbox?</h2>
+        <select name="account_id" required style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
+          <option value="">Choose an account</option>
+          ${accountOptions}
+        </select>
+      </div>
+      <div class="section">
+        <h2>Your request</h2>
+        <p class="section-help">
+          Examples: "Find the email thread about the marketing proposal" or "Draft an email
+          to sarah@example.com about rescheduling Thursday's appointment."
+        </p>
+        <textarea name="message" rows="4">${message ?? ""}</textarea>
+      </div>
+      <button type="submit">Ask</button>
+    </form>
+
+    ${resultHtml}
+  `;
+}
 
 // ---------- OAuth ----------
 
