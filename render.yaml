@@ -1,0 +1,34 @@
+databases:
+  - name: inbox-assistant-db
+    plan: free
+
+services:
+  - type: web
+    name: inbox-assistant
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: inbox-assistant-db
+          property: connectionString
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: MS_CLIENT_ID
+        sync: false
+      - key: MS_CLIENT_SECRET
+        sync: false
+      - key: MS_REDIRECT_URI
+        sync: false
+      - key: POLL_TRIGGER_SECRET
+        sync: false
+      - key: POLL_INTERVAL_MINUTES
+        value: "5"
