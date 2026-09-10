@@ -35,6 +35,12 @@ async function getOrRefreshVoiceProfile(account, provider) {
   return profile;
 }
 
+function shouldMove(account, label) {
+  if (label === "urgent") return account.move_urgent;
+  if (label === "fyi") return account.move_fyi;
+  return account.move_low_priority;
+}
+
 export async function pollAccount(account) {
   const provider = providerFor(account);
   const messageIds = await provider.listUnreadMessageIds(account);
@@ -62,9 +68,16 @@ export async function pollAccount(account) {
 
     await provider.applyLabel(account, id, label);
 
+    if (shouldMove(account, label) && provider.moveOutOfInbox) {
+      await provider.moveOutOfInbox(account, id, label);
+    }
+
     let draftCreated = false;
     if (label !== "low_priority") {
-      const replyText = await draftReply({ voiceProfile, incomingEmail: detail });
+      const threadContext = provider.getThreadContext
+        ? await provider.getThreadContext(account, detail)
+        : [];
+      const replyText = await draftReply({ voiceProfile, incomingEmail: detail, threadContext });
       await provider.createDraftReply(account, { detail, body: replyText });
       draftCreated = true;
     }

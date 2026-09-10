@@ -49,8 +49,17 @@ ${sample}`,
   return msg.content[0]?.text ?? "";
 }
 
-// Drafts a reply in the account owner's voice. Never sends — output is saved as a Gmail draft.
-export async function draftReply({ voiceProfile, incomingEmail }) {
+// Drafts a reply in the account owner's voice. Never sends — output is saved as a draft.
+// threadContext, if provided, is an array of {from, body} for earlier messages in the
+// same thread (oldest first), giving the draft full conversation awareness.
+export async function draftReply({ voiceProfile, incomingEmail, threadContext }) {
+  const threadBlock =
+    threadContext && threadContext.length
+      ? `\nEARLIER MESSAGES IN THIS THREAD (oldest first):\n${threadContext
+          .map((m) => `--- From: ${m.from} ---\n${m.body}`)
+          .join("\n\n")}\n`
+      : "";
+
   const msg = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 600,
@@ -61,7 +70,7 @@ export async function draftReply({ voiceProfile, incomingEmail }) {
 
 VOICE PROFILE:
 ${voiceProfile || "No profile yet — use a neutral, professional tone."}
-
+${threadBlock}
 EMAIL TO REPLY TO:
 From: ${incomingEmail.from}
 Subject: ${incomingEmail.subject}

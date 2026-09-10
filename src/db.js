@@ -19,10 +19,16 @@ export async function initSchema() {
       voice_profile TEXT,               -- cached summary of how this person writes
       voice_profile_updated_at TIMESTAMPTZ,
       custom_instructions TEXT,         -- free-text triage rules, folded into the classification prompt
+      move_urgent BOOLEAN DEFAULT false,       -- move "urgent"-labeled mail out of the inbox into a folder
+      move_fyi BOOLEAN DEFAULT false,          -- move "fyi"-labeled mail out of the inbox into a folder
+      move_low_priority BOOLEAN DEFAULT true,  -- move "low_priority"-labeled mail out of the inbox into a folder
       created_at TIMESTAMPTZ DEFAULT now()
     );
 
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS custom_instructions TEXT;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_urgent BOOLEAN DEFAULT false;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_fyi BOOLEAN DEFAULT false;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_low_priority BOOLEAN DEFAULT true;
 
     CREATE TABLE IF NOT EXISTS processed_messages (
       id SERIAL PRIMARY KEY,
