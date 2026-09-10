@@ -140,6 +140,7 @@ function renderLayout({ title, activeAccountId, accounts, body }) {
       <nav class="account-nav">
         <div class="nav-label">Tools</div>
         <a href="/chat" class="account-link">💬 Chat</a>
+        <a href="/invoices" class="account-link">🧾 Invoices</a>
       </nav>
       <nav class="account-nav">
         <div class="nav-label">Accounts</div>
@@ -386,6 +387,99 @@ app.post("/priorities/:id/delete", async (req, res) => {
   res.redirect("/");
 });
 
+// ---------- Invoices ----------
+
+app.get("/invoices", async (req, res) => {
+  const accounts = await getAccounts();
+  const showPaid = req.query.view === "paid";
+
+  const { rows: invoiceRows } = await pool.query(
+    `SELECT inv.id, inv.vendor, inv.amount, inv.currency, inv.due_date, inv.invoice_number,
+            inv.subject, inv.web_link, a.email AS account_email
+     FROM invoices inv
+     JOIN accounts a ON a.id = inv.account_id
+     WHERE inv.paid = $1
+     ORDER BY ${showPaid ? "inv.created_at DESC" : "inv.due_date ASC NULLS LAST, inv.created_at DESC"}
+     LIMIT 100`,
+    [showPaid]
+  );
+
+  const fmtAmount = (amount, currency) => {
+    if (amount === null || amount === undefined) return "";
+    try {
+      return new Intl.NumberFormat("en-US", { style: "currency", currency: currency || "USD" }).format(amount);
+    } catch {
+      return `${amount} ${currency || ""}`.trim();
+    }
+  };
+
+  const isOverdue = (dueDate) => dueDate && new Date(dueDate) < new Date();
+
+  const invoiceListHtml = invoiceRows.length
+    ? invoiceRows
+        .map(
+          (inv) => `
+        <div class="priority-row">
+          <div class="priority-main">
+            <div class="priority-top">
+              <span class="priority-subject">${inv.vendor || inv.subject || "(unknown vendor)"}</span>
+              ${inv.amount !== null ? `<span class="pin-badge" style="background:var(--accent-wash); color:var(--accent-dark);">${fmtAmount(inv.amount, inv.currency)}</span>` : ""}
+              ${!showPaid && isOverdue(inv.due_date) ? `<span class="pin-badge">Overdue</span>` : ""}
+            </div>
+            <div class="priority-meta">
+              ${inv.account_email}${inv.due_date ? ` · Due ${new Date(inv.due_date).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" })}` : " · No due date found"}${inv.invoice_number ? ` · #${inv.invoice_number}` : ""}
+            </div>
+            ${inv.subject && inv.subject !== inv.vendor ? `<div class="priority-snippet">${inv.subject}</div>` : ""}
+          </div>
+          <div class="priority-actions">
+            ${inv.web_link ? `<a href="${inv.web_link}">Open</a>` : ""}
+            ${
+              showPaid
+                ? `<form method="POST" action="/invoices/${inv.id}/unpaid" style="display:inline;">
+                     <button type="submit" class="link-button">Mark unpaid</button>
+                   </form>`
+                : `<form method="POST" action="/invoices/${inv.id}/paid" style="display:inline;">
+                     <button type="submit" class="link-button">Mark paid</button>
+                   </form>`
+            }
+            <form method="POST" action="/invoices/${inv.id}/delete" style="display:inline;">
+              <button type="submit" class="link-button danger">Delete</button>
+            </form>
+          </div>
+        </div>`
+        )
+        .join("")
+    : `<div class="empty-state" style="padding:20px 0;">${
+        showPaid ? "No paid invoices yet." : "No unpaid invoices right now."
+      }</div>`;
+
+  const body = `
+    <h1>${showPaid ? "Paid invoices" : "Invoices"}</h1>
+    <p class="subtitle">
+      ${showPaid ? "Invoices you've marked paid." : "Bills from vendors, with amount and due date pulled out automatically."}
+      ${showPaid ? `<a href="/invoices" style="margin-left:8px;">← Back to unpaid</a>` : `<a href="/invoices?view=paid" style="margin-left:8px;">View paid →</a>`}
+    </p>
+    <div class="priority-list">${invoiceListHtml}</div>
+  `;
+
+  res.send(renderLayout({ title: "Invoices", activeAccountId: null, accounts, body }));
+});
+
+app.post("/invoices/:id/paid", async (req, res) => {
+  await pool.query(`UPDATE invoices SET paid = true WHERE id = $1`, [req.params.id]);
+  res.redirect("/invoices");
+});
+
+app.post("/invoices/:id/unpaid", async (req, res) => {
+  await pool.query(`UPDATE invoices SET paid = false WHERE id = $1`, [req.params.id]);
+  res.redirect("/invoices");
+});
+
+app.post("/invoices/:id/delete", async (req, res) => {
+  await pool.query(`DELETE FROM invoices WHERE id = $1`, [req.params.id]);
+  res.redirect("/invoices");
+});
+
 // ---------- Chat (inbox search + draft-from-scratch) ----------
 
 app.get("/chat", async (req, res) => {
@@ -615,6 +709,7 @@ const CATEGORIES = [
   { key: "fyi", name: "FYI", desc: "Informational, no reply needed" },
   { key: "marketing", name: "Marketing", desc: "Promotions, newsletters, sales emails" },
   { key: "notifications", name: "Notifications", desc: "Automated system or app alerts" },
+  { key: "invoices", name: "Invoices", desc: "Bills from vendors — amount and due date get tracked automatically" },
 ];
 
 app.get("/settings/:id", async (req, res) => {
@@ -623,7 +718,7 @@ app.get("/settings/:id", async (req, res) => {
     `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders, signature,
             learned_style_notes, timezone, work_start_hour, work_end_hour, notice_hours,
             scheduling_days_ahead, auto_calendar_events, active,
-            move_urgent, move_fyi, move_marketing, move_notifications
+            move_urgent, move_fyi, move_marketing, move_notifications, move_invoices
      FROM accounts WHERE id = $1`,
     [req.params.id]
   );
@@ -1011,8 +1106,9 @@ app.post("/settings/:id", async (req, res) => {
      SET custom_instructions = $1, tone_instructions = $2, always_draft_senders = $3, signature = $4,
          timezone = $5, work_start_hour = $6, work_end_hour = $7, notice_hours = $8,
          scheduling_days_ahead = $9, auto_calendar_events = $10,
-         move_urgent = $11, move_fyi = $12, move_marketing = $13, move_notifications = $14
-     WHERE id = $15`,
+         move_urgent = $11, move_fyi = $12, move_marketing = $13, move_notifications = $14,
+         move_invoices = $15
+     WHERE id = $16`,
     [
       req.body.custom_instructions ?? "",
       req.body.tone_instructions ?? "",
@@ -1028,6 +1124,7 @@ app.post("/settings/:id", async (req, res) => {
       !!req.body.move_fyi,
       !!req.body.move_marketing,
       !!req.body.move_notifications,
+      !!req.body.move_invoices,
       req.params.id,
     ]
   );

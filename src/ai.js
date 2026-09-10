@@ -15,12 +15,15 @@ export async function classifyEmail({ subject, from, snippet, customInstructions
     messages: [
       {
         role: "user",
-        content: `Classify this email into exactly one label: urgent, fyi, marketing, or notifications.
+        content: `Classify this email into exactly one label: urgent, fyi, marketing, notifications, or invoices.
 - urgent: needs a human reply
 - fyi: informational, no reply needed, but not marketing or an automated notification
 - marketing: promotional content, newsletters, sales/marketing emails
-- notifications: automated system or app notifications — calendar reminders, receipts,
-  service alerts, app/tool notifications — not marketing, not something a human wrote to you
+- notifications: automated system or app notifications — calendar reminders, receipts
+  for something already paid, service alerts, app/tool notifications — not marketing,
+  not something a human wrote to you, not an unpaid bill
+- invoices: a bill or invoice from a vendor/supplier requesting payment — something owed
+  and not yet paid. A receipt confirming a completed payment is "notifications", not this.
 Reply with only the label, nothing else.
 ${instructionsBlock}
 From: ${from}
@@ -30,7 +33,7 @@ Preview: ${snippet}`,
     ],
   });
   const label = msg.content[0]?.text?.trim().toLowerCase();
-  return ["urgent", "fyi", "marketing", "notifications"].includes(label) ? label : "fyi";
+  return ["urgent", "fyi", "marketing", "notifications", "invoices"].includes(label) ? label : "fyi";
 }
 
 // Summarizes someone's writing style from a batch of their own sent emails.
@@ -328,5 +331,40 @@ ${body}`,
     return JSON.parse(jsonMatch ? jsonMatch[0] : text);
   } catch {
     return { isAppointment: false };
+  }
+}
+
+// ---------- Invoice detail extraction ----------
+
+// Pulls structured billing details from an email already classified as "invoices".
+// Returns nulls for anything it can't confidently find rather than guessing.
+export async function extractInvoiceDetails({ subject, from, snippet, body }) {
+  const msg = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 250,
+    messages: [
+      {
+        role: "user",
+        content: `Extract billing details from this invoice/bill email. Reply with JSON
+only, no commentary, no markdown fences:
+{"vendor": "<company/sender name, or empty string>", "amount": <number, or null if not found>, "currency": "<3-letter code like USD, or empty string>", "dueDate": "<YYYY-MM-DD, or empty string if no due date is stated>", "invoiceNumber": "<invoice/reference number, or empty string>"}
+
+Only fill in fields you're actually confident about from the email — leave others empty/null
+rather than guessing.
+
+From: ${from}
+Subject: ${subject}
+Preview: ${snippet}
+Body:
+${body}`,
+      },
+    ],
+  });
+  const text = msg.content[0]?.text ?? "{}";
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    return JSON.parse(jsonMatch ? jsonMatch[0] : text);
+  } catch {
+    return { vendor: "", amount: null, currency: "", dueDate: "", invoiceNumber: "" };
   }
 }

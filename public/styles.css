@@ -14,6 +14,7 @@
   --marketing: #b08d57;
   --notifications: #6b7280;
   --follow-up: #7b5ea7;
+  --invoice: #2f7a52;
 
   --radius: 6px;
 }
@@ -271,6 +272,10 @@ code {
 
 .category-dot.notifications {
   background: var(--notifications);
+}
+
+.category-dot.invoices {
+  background: var(--invoice);
 }
 
 .category-name {

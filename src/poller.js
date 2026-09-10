@@ -1,5 +1,5 @@
 import { pool } from "./db.js";
-import { classifyEmail, draftReply, buildVoiceProfile, needsScheduling } from "./ai.js";
+import { classifyEmail, draftReply, buildVoiceProfile, needsScheduling, extractInvoiceDetails } from "./ai.js";
 import { getCustomFilesContext } from "./customFiles.js";
 import { getAvailability, formatAvailabilityWindows } from "./scheduling.js";
 import { checkForAppointment } from "./appointments.js";
@@ -43,6 +43,7 @@ function shouldMove(account, label) {
   if (label === "fyi") return account.move_fyi;
   if (label === "marketing") return account.move_marketing;
   if (label === "notifications") return account.move_notifications;
+  if (label === "invoices") return account.move_invoices;
   return true; // unknown label — safe default is to file it away
 }
 
@@ -91,6 +92,42 @@ export async function pollAccount(account) {
 
     if (label !== "marketing") {
       await checkForAppointment(account, detail, id);
+    }
+
+    if (label === "invoices") {
+      try {
+        const already = await pool.query(
+          `SELECT 1 FROM invoices WHERE account_id = $1 AND message_id = $2`,
+          [account.id, id]
+        );
+        if (already.rowCount === 0) {
+          const extracted = await extractInvoiceDetails({
+            subject: detail.subject,
+            from: detail.from,
+            snippet: detail.snippet,
+            body: detail.body,
+          });
+          await pool.query(
+            `INSERT INTO invoices
+               (account_id, message_id, vendor, amount, currency, due_date, invoice_number, subject, web_link)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (account_id, message_id) DO NOTHING`,
+            [
+              account.id,
+              id,
+              extracted.vendor || detail.from,
+              extracted.amount ?? null,
+              extracted.currency || "USD",
+              extracted.dueDate || null,
+              extracted.invoiceNumber || "",
+              detail.subject ?? "",
+              detail.webLink ?? "",
+            ]
+          );
+        }
+      } catch (err) {
+        console.error(`Invoice extraction failed for ${account.email}:`, err.message);
+      }
     }
 
     let draftCreated = false;

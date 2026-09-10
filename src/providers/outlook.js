@@ -47,6 +47,7 @@ const FOLDER_NAMES = {
   fyi: "AI FYI",
   marketing: "AI Marketing",
   notifications: "AI Notifications",
+  invoices: "AI Invoices",
 };
 
 async function ensureFolder(account, label) {

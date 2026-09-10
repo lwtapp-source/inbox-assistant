@@ -34,6 +34,7 @@ export async function initSchema() {
       move_fyi BOOLEAN DEFAULT true,           -- move "fyi"-labeled mail out of the inbox into a folder
       move_marketing BOOLEAN DEFAULT true,     -- move "marketing"-labeled mail out of the inbox into a folder
       move_notifications BOOLEAN DEFAULT true, -- move "notifications"-labeled mail out of the inbox into a folder
+      move_invoices BOOLEAN DEFAULT true,      -- move "invoices"-labeled mail out of the inbox into a folder
       move_low_priority BOOLEAN DEFAULT true,  -- legacy column, kept for old data; no longer written to
       created_at TIMESTAMPTZ DEFAULT now()
     );
@@ -54,6 +55,7 @@ export async function initSchema() {
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_fyi BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_marketing BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_notifications BOOLEAN DEFAULT true;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_invoices BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_low_priority BOOLEAN DEFAULT true;
     ALTER TABLE accounts ALTER COLUMN move_fyi SET DEFAULT true;
 
@@ -121,6 +123,22 @@ export async function initSchema() {
       end_time TIMESTAMPTZ NOT NULL,
       location TEXT,
       calendar_event_id TEXT,           -- id on the actual Google/Outlook calendar, for deletion
+      created_at TIMESTAMPTZ DEFAULT now(),
+      UNIQUE(account_id, message_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS invoices (
+      id SERIAL PRIMARY KEY,
+      account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      vendor TEXT,
+      amount NUMERIC,
+      currency TEXT DEFAULT 'USD',
+      due_date DATE,
+      invoice_number TEXT,
+      subject TEXT,
+      web_link TEXT,
+      paid BOOLEAN DEFAULT false,
       created_at TIMESTAMPTZ DEFAULT now(),
       UNIQUE(account_id, message_id)
     );
