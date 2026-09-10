@@ -4,7 +4,11 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = "claude-sonnet-4-6";
 
 // Cheap, fast triage: urgent / fyi / low_priority
-export async function classifyEmail({ subject, from, snippet }) {
+export async function classifyEmail({ subject, from, snippet, customInstructions }) {
+  const instructionsBlock = customInstructions?.trim()
+    ? `\nThe inbox owner has given these additional rules for how to classify mail — follow them:\n${customInstructions.trim()}\n`
+    : "";
+
   const msg = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 20,
@@ -13,7 +17,7 @@ export async function classifyEmail({ subject, from, snippet }) {
         role: "user",
         content: `Classify this email into exactly one label: urgent, fyi, or low_priority.
 Reply with only the label, nothing else.
-
+${instructionsBlock}
 From: ${from}
 Subject: ${subject}
 Preview: ${snippet}`,

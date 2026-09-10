@@ -57,6 +57,7 @@ export async function pollAccount(account) {
       subject: detail.subject,
       from: detail.from,
       snippet: detail.snippet,
+      customInstructions: account.custom_instructions,
     });
 
     await provider.applyLabel(account, id, label);

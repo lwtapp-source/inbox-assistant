@@ -18,8 +18,11 @@ export async function initSchema() {
       refresh_token TEXT NOT NULL,
       voice_profile TEXT,               -- cached summary of how this person writes
       voice_profile_updated_at TIMESTAMPTZ,
+      custom_instructions TEXT,         -- free-text triage rules, folded into the classification prompt
       created_at TIMESTAMPTZ DEFAULT now()
     );
+
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS custom_instructions TEXT;
 
     CREATE TABLE IF NOT EXISTS processed_messages (
       id SERIAL PRIMARY KEY,
