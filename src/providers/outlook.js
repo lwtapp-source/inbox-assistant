@@ -45,7 +45,8 @@ const folderIdCache = new Map(); // `${accountId}:${label}` -> Graph folder id
 const FOLDER_NAMES = {
   urgent: "AI To Respond",
   fyi: "AI FYI",
-  low_priority: "AI Low Priority",
+  marketing: "AI Marketing",
+  notifications: "AI Notifications",
 };
 
 async function ensureFolder(account, label) {
