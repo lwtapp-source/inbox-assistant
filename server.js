@@ -255,6 +255,15 @@ app.get("/settings/:id", async (req, res) => {
 
       <button type="submit">Save changes</button>
     </form>
+
+    <script>
+      document.querySelectorAll('.toggle input[type=checkbox]').forEach((el) => {
+        el.addEventListener('change', () => {
+          const stateEl = el.closest('.category-row').querySelector('.category-state');
+          stateEl.textContent = el.checked ? 'Moved to folder' : 'Stays in inbox';
+        });
+      });
+    </script>
   `;
 
   res.send(renderLayout({ title: account.email, activeAccountId: account.id, accounts, body }));
