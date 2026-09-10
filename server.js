@@ -5,6 +5,7 @@ import { getAuthUrl as getGoogleAuthUrl, handleOAuthCallback as handleGoogleCall
 import { getAuthUrl as getOutlookAuthUrl, handleOAuthCallback as handleOutlookCallback } from "./src/auth/outlook.js";
 import { pollAllAccounts } from "./src/poller.js";
 import { bulkSortRecent } from "./src/bulkSort.js";
+import { checkAllFollowUps } from "./src/followUp.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -76,8 +77,9 @@ app.get("/poll", async (req, res) => {
   if (req.query.secret !== process.env.POLL_TRIGGER_SECRET) {
     return res.status(401).send("Unauthorized");
   }
-  const results = await pollAllAccounts();
-  res.json(results);
+  const pollResults = await pollAllAccounts();
+  const followUpResults = await checkAllFollowUps();
+  res.json({ poll: pollResults, followUps: followUpResults });
 });
 
 app.get("/health", (_req, res) => res.send("ok"));
@@ -171,6 +173,10 @@ async function start() {
     console.log("Polling all accounts...");
     const results = await pollAllAccounts();
     console.log(results);
+
+    console.log("Checking follow-ups...");
+    const followUpResults = await checkAllFollowUps();
+    console.log(followUpResults);
   }, intervalMs);
 }
 
