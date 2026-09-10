@@ -78,6 +78,46 @@ async function getAccounts() {
 app.get("/", async (_req, res) => {
   const accounts = await getAccounts();
 
+  const { rows: priorities } = await pool.query(
+    `SELECT pm.id, pm.subject, pm.from_address, pm.snippet, pm.web_link, pm.pinned,
+            a.email AS account_email
+     FROM processed_messages pm
+     JOIN accounts a ON a.id = pm.account_id
+     WHERE pm.label = 'urgent' AND pm.done = false
+     ORDER BY pm.pinned DESC, pm.processed_at DESC
+     LIMIT 50`
+  );
+
+  const priorityRows = priorities.length
+    ? priorities
+        .map(
+          (p) => `
+        <div class="priority-row">
+          <div class="priority-main">
+            <div class="priority-top">
+              <span class="priority-subject">${p.subject || "(no subject)"}</span>
+              ${p.pinned ? `<span class="pin-badge">Pinned</span>` : ""}
+            </div>
+            <div class="priority-meta">${p.from_address} · ${p.account_email}</div>
+            ${p.snippet ? `<div class="priority-snippet">${p.snippet}</div>` : ""}
+          </div>
+          <div class="priority-actions">
+            ${p.web_link ? `<a href="${p.web_link}" target="_blank" rel="noopener">Open</a>` : ""}
+            <form method="POST" action="/priorities/${p.id}/pin" style="display:inline;">
+              <button type="submit" class="link-button">${p.pinned ? "Unpin" : "Pin"}</button>
+            </form>
+            <form method="POST" action="/priorities/${p.id}/done" style="display:inline;">
+              <button type="submit" class="link-button">Done</button>
+            </form>
+            <form method="POST" action="/priorities/${p.id}/delete" style="display:inline;">
+              <button type="submit" class="link-button danger">Delete</button>
+            </form>
+          </div>
+        </div>`
+        )
+        .join("")
+    : `<div class="empty-state" style="padding:20px 0;">Nothing urgent waiting on you right now.</div>`;
+
   const rows = accounts.length
     ? accounts
         .map(
@@ -99,12 +139,37 @@ app.get("/", async (_req, res) => {
       </div>`;
 
   const body = `
-    <h1>Connected accounts</h1>
-    <p class="subtitle">Each inbox sorts itself every 5 minutes — urgent mail stays put, everything else files itself away.</p>
-    <div class="account-list">${rows}</div>
+    <h1>Top priorities</h1>
+    <p class="subtitle">Every urgent email across your connected inboxes, in one list.</p>
+    <div class="priority-list">${priorityRows}</div>
+
+    <div class="section" style="margin-top:12px;">
+      <h2>Connected accounts</h2>
+      <div class="account-list">${rows}</div>
+    </div>
   `;
 
-  res.send(renderLayout({ title: "Accounts", activeAccountId: null, accounts, body }));
+  res.send(renderLayout({ title: "Home", activeAccountId: null, accounts, body }));
+});
+
+// ---------- Top priorities actions ----------
+
+app.post("/priorities/:id/done", async (req, res) => {
+  await pool.query(`UPDATE processed_messages SET done = true WHERE id = $1`, [req.params.id]);
+  res.redirect("/");
+});
+
+app.post("/priorities/:id/pin", async (req, res) => {
+  await pool.query(
+    `UPDATE processed_messages SET pinned = NOT pinned WHERE id = $1`,
+    [req.params.id]
+  );
+  res.redirect("/");
+});
+
+app.post("/priorities/:id/delete", async (req, res) => {
+  await pool.query(`DELETE FROM processed_messages WHERE id = $1`, [req.params.id]);
+  res.redirect("/");
 });
 
 // ---------- OAuth ----------
@@ -172,7 +237,7 @@ const CATEGORIES = [
 app.get("/settings/:id", async (req, res) => {
   const accounts = await getAccounts();
   const { rows } = await pool.query(
-    `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders,
+    `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders, signature,
             move_urgent, move_fyi, move_marketing, move_notifications
      FROM accounts WHERE id = $1`,
     [req.params.id]
@@ -246,6 +311,16 @@ app.get("/settings/:id", async (req, res) => {
       </div>
 
       <div class="section">
+        <h2>Email signature</h2>
+        <p class="section-help">
+          Plain-text signature appended to every generated draft. Drafts created through the
+          API don't automatically pick up the signature configured in Gmail or Outlook, so
+          set it here if you want one included.
+        </p>
+        <textarea name="signature" rows="4">${account.signature ?? ""}</textarea>
+      </div>
+
+      <div class="section">
         <h2>Category routing</h2>
         <p class="section-help">
           Choose whether each category stays visible in the inbox or moves into its own folder.
@@ -272,13 +347,14 @@ app.get("/settings/:id", async (req, res) => {
 app.post("/settings/:id", async (req, res) => {
   await pool.query(
     `UPDATE accounts
-     SET custom_instructions = $1, tone_instructions = $2, always_draft_senders = $3,
-         move_urgent = $4, move_fyi = $5, move_marketing = $6, move_notifications = $7
-     WHERE id = $8`,
+     SET custom_instructions = $1, tone_instructions = $2, always_draft_senders = $3, signature = $4,
+         move_urgent = $5, move_fyi = $6, move_marketing = $7, move_notifications = $8
+     WHERE id = $9`,
     [
       req.body.custom_instructions ?? "",
       req.body.tone_instructions ?? "",
       req.body.always_draft_senders ?? "",
+      req.body.signature ?? "",
       !!req.body.move_urgent,
       !!req.body.move_fyi,
       !!req.body.move_marketing,
