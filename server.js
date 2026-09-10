@@ -794,6 +794,28 @@ app.get("/settings/:id", async (req, res) => {
       </div>
     </div>
 
+    <div class="section" style="border-top:1px solid var(--border); padding-top:22px;">
+      <h2 style="color:var(--urgent);">Disconnect this account</h2>
+      <p class="section-help">
+        Removes ${account.email} from Inbox Assistant and permanently deletes everything
+        stored about it here — triage rules, custom files, learned notes, tracked drafts,
+        detected appointments, all of it. This does not send anything or delete real email
+        or calendar events — it only stops Inbox Assistant from accessing this account.
+        To fully revoke access on ${account.provider === "google" ? "Google" : "Microsoft"}'s
+        side too, visit
+        <a href="${
+          account.provider === "google"
+            ? "https://myaccount.google.com/permissions"
+            : "https://account.live.com/consent/Manage"
+        }" target="_blank" rel="noopener">${account.provider === "google" ? "Google account permissions" : "Microsoft account permissions"}</a>
+        and remove Inbox Assistant there as well.
+      </p>
+      <form method="POST" action="/settings/${account.id}/disconnect"
+        onsubmit="return confirm('Disconnect ${account.email}? This deletes everything Inbox Assistant has stored about this account and cannot be undone.');">
+        <button type="submit" style="background:var(--urgent);">Disconnect ${account.email}</button>
+      </form>
+    </div>
+
     <script>
       document.querySelectorAll('.toggle input[type=checkbox]').forEach((el) => {
         el.addEventListener('change', () => {
@@ -861,6 +883,11 @@ app.post("/settings/:id/learned-notes/clear", async (req, res) => {
     req.params.id,
   ]);
   res.redirect(`/settings/${req.params.id}`);
+});
+
+app.post("/settings/:id/disconnect", async (req, res) => {
+  await pool.query(`DELETE FROM accounts WHERE id = $1`, [req.params.id]);
+  res.redirect("/");
 });
 
 app.post("/settings/:id/events/:eventId/delete", async (req, res) => {
