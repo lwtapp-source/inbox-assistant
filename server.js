@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import multer from "multer";
 import pdfParse from "pdf-parse";
+import session from "express-session";
 import { initSchema, pool } from "./src/db.js";
 import { getAuthUrl as getGoogleAuthUrl, handleOAuthCallback as handleGoogleCallback } from "./src/auth/google.js";
 import { getAuthUrl as getOutlookAuthUrl, handleOAuthCallback as handleOutlookCallback } from "./src/auth/outlook.js";
@@ -28,8 +29,81 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+app.set("trust proxy", 1); // Render terminates TLS at the proxy; needed for secure cookies
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
+
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: process.env.NODE_ENV !== "development",
+      httpOnly: true,
+      sameSite: "lax",
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    },
+  })
+);
+
+// ---------- Auth gate ----------
+// This whole app manages real email and calendar access, so nothing past this point is
+// reachable without a session — except the login page itself, the health check (Render
+// pings this without a session), and /poll (protected by its own secret, meant to be hit
+// by an external cron trigger, not a browser).
+
+function renderLoginPage(error) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign in · Inbox Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div style="max-width:360px; margin:14vh auto 0; padding:0 24px;">
+    <div class="wordmark" style="color:var(--ink); margin-bottom:28px;">Inbox<br />Assistant</div>
+    <form method="POST" action="/login">
+      ${error ? `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">${error}</div><br/>` : ""}
+      <p class="section-help" style="margin-top:0;">This tool manages real email and calendar access, so it's password-protected.</p>
+      <input type="password" name="password" placeholder="Password" autofocus required
+        style="width:100%; padding:11px 13px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; margin-bottom:12px;" />
+      <button type="submit" style="width:100%;">Sign in</button>
+    </form>
+  </div>
+</body>
+</html>`;
+}
+
+app.get("/login", (req, res) => {
+  res.send(renderLoginPage());
+});
+
+app.post("/login", (req, res) => {
+  if (req.body.password && req.body.password === process.env.APP_PASSWORD) {
+    req.session.authenticated = true;
+    return res.redirect("/");
+  }
+  res.status(401).send(renderLoginPage("Wrong password."));
+});
+
+app.get("/logout", (req, res) => {
+  req.session.destroy(() => res.redirect("/login"));
+});
+
+app.use((req, res, next) => {
+  if (req.path === "/health" || req.path === "/poll") return next();
+  if (req.session?.authenticated) return next();
+  return res.redirect("/login");
+});
 
 // ---------- Shared page shell ----------
 
@@ -75,6 +149,7 @@ function renderLayout({ title, activeAccountId, accounts, body }) {
         <div class="nav-label">Connect</div>
         <a href="/auth/google" class="connect-link">+ Gmail account</a>
         <a href="/auth/outlook" class="connect-link">+ Outlook account</a>
+        <a href="/logout" class="connect-link" style="margin-top:16px;">Log out</a>
       </div>
     </aside>
     <main class="main">
