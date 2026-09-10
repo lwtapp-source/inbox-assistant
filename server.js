@@ -4,6 +4,7 @@ import { initSchema, pool } from "./src/db.js";
 import { getAuthUrl as getGoogleAuthUrl, handleOAuthCallback as handleGoogleCallback } from "./src/auth/google.js";
 import { getAuthUrl as getOutlookAuthUrl, handleOAuthCallback as handleOutlookCallback } from "./src/auth/outlook.js";
 import { pollAllAccounts } from "./src/poller.js";
+import { bulkSortRecent } from "./src/bulkSort.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -37,8 +38,13 @@ app.get("/auth/google", (_req, res) => {
 // Step 2: Google redirects back here with a code
 app.get("/auth/google/callback", async (req, res) => {
   try {
-    const email = await handleGoogleCallback(req.query.code);
-    res.send(`Connected ${email}. You can close this tab.`);
+    const account = await handleGoogleCallback(req.query.code);
+    res.send(
+      `Connected ${account.email}. Sorting your recent inbox now — this runs in the background, check back in a few minutes. You can close this tab.`
+    );
+    bulkSortRecent(account).catch((err) =>
+      console.error(`Bulk sort failed for ${account.email}:`, err)
+    );
   } catch (err) {
     console.error(err);
     res.status(500).send("OAuth failed: " + err.message);
@@ -51,8 +57,13 @@ app.get("/auth/outlook", (_req, res) => {
 
 app.get("/auth/outlook/callback", async (req, res) => {
   try {
-    const email = await handleOutlookCallback(req.query.code);
-    res.send(`Connected ${email}. You can close this tab.`);
+    const account = await handleOutlookCallback(req.query.code);
+    res.send(
+      `Connected ${account.email}. Sorting your recent inbox now — this runs in the background, check back in a few minutes. You can close this tab.`
+    );
+    bulkSortRecent(account).catch((err) =>
+      console.error(`Bulk sort failed for ${account.email}:`, err)
+    );
   } catch (err) {
     console.error(err);
     res.status(500).send("OAuth failed: " + err.message);
@@ -73,22 +84,36 @@ app.get("/health", (_req, res) => res.send("ok"));
 
 app.get("/settings/:id", async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT id, email, provider, custom_instructions FROM accounts WHERE id = $1`,
+    `SELECT id, email, provider, custom_instructions, move_urgent, move_fyi, move_low_priority
+     FROM accounts WHERE id = $1`,
     [req.params.id]
   );
   const account = rows[0];
   if (!account) return res.status(404).send("Account not found");
 
+  const checkbox = (name, checked) =>
+    `<input type="checkbox" name="${name}" ${checked ? "checked" : ""}>`;
+
   res.send(`
     <h1>Triage rules for ${account.email}</h1>
-    <p>Write plain-language rules for how mail in this inbox should be classified.
-    These get folded into the classification prompt alongside the subject/sender/preview
-    of each email. Example: "Emails from clients or referring vets are always urgent.
-    Newsletters and marketing are always low_priority. Anything mentioning an invoice is fyi."</p>
+    ${req.query.saved ? "<p><strong>Saved.</strong></p>" : ""}
     <form method="POST" action="/settings/${account.id}">
+      <p>Write plain-language rules for how mail in this inbox should be classified.
+      These get folded into the classification prompt alongside the subject/sender/preview
+      of each email. Example: "Emails from clients or referring vets are always urgent.
+      Newsletters and marketing are always low_priority. Anything mentioning an invoice is fyi."</p>
       <textarea name="custom_instructions" rows="10" cols="80">${
         account.custom_instructions ?? ""
       }</textarea>
+
+      <h2>Move out of inbox</h2>
+      <p>For each category, choose whether matching mail should be moved into its own
+      folder (checked) or stay visible in the main inbox (unchecked) — like Fyxer's
+      "move out of my inbox" toggle.</p>
+      <p>${checkbox("move_urgent", account.move_urgent)} Urgent / To Respond</p>
+      <p>${checkbox("move_fyi", account.move_fyi)} FYI</p>
+      <p>${checkbox("move_low_priority", account.move_low_priority)} Low priority</p>
+
       <br/>
       <button type="submit">Save</button>
     </form>
@@ -97,10 +122,18 @@ app.get("/settings/:id", async (req, res) => {
 });
 
 app.post("/settings/:id", async (req, res) => {
-  await pool.query(`UPDATE accounts SET custom_instructions = $1 WHERE id = $2`, [
-    req.body.custom_instructions ?? "",
-    req.params.id,
-  ]);
+  await pool.query(
+    `UPDATE accounts
+     SET custom_instructions = $1, move_urgent = $2, move_fyi = $3, move_low_priority = $4
+     WHERE id = $5`,
+    [
+      req.body.custom_instructions ?? "",
+      !!req.body.move_urgent,
+      !!req.body.move_fyi,
+      !!req.body.move_low_priority,
+      req.params.id,
+    ]
+  );
   res.redirect(`/settings/${req.params.id}?saved=1`);
 });
 
