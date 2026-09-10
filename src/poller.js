@@ -98,14 +98,27 @@ export async function pollAccount(account) {
         threadContext,
         toneInstructions: account.tone_instructions,
       });
-      await provider.createDraftReply(account, { detail, body: replyText });
+      const finalText = account.signature?.trim()
+        ? `${replyText}\n\n${account.signature.trim()}`
+        : replyText;
+      await provider.createDraftReply(account, { detail, body: finalText });
       draftCreated = true;
     }
 
     await pool.query(
-      `INSERT INTO processed_messages (account_id, message_id, label, draft_created)
-       VALUES ($1, $2, $3, $4)`,
-      [account.id, id, label, draftCreated]
+      `INSERT INTO processed_messages
+         (account_id, message_id, label, draft_created, subject, from_address, snippet, web_link)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        account.id,
+        id,
+        label,
+        draftCreated,
+        detail.subject ?? "",
+        detail.from ?? "",
+        detail.snippet ?? "",
+        detail.webLink ?? "",
+      ]
     );
 
     handled++;

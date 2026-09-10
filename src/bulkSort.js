@@ -51,10 +51,19 @@ export async function bulkSortRecent(account, limit = 300) {
       }
 
       await pool.query(
-        `INSERT INTO processed_messages (account_id, message_id, label, draft_created)
-         VALUES ($1, $2, $3, false)
+        `INSERT INTO processed_messages
+           (account_id, message_id, label, draft_created, subject, from_address, snippet, web_link)
+         VALUES ($1, $2, $3, false, $4, $5, $6, $7)
          ON CONFLICT (account_id, message_id) DO NOTHING`,
-        [account.id, id, label]
+        [
+          account.id,
+          id,
+          label,
+          detail.subject ?? "",
+          detail.from ?? "",
+          detail.snippet ?? "",
+          detail.webLink ?? "",
+        ]
       );
 
       sorted++;
