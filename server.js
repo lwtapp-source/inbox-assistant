@@ -196,7 +196,7 @@ app.get("/", async (req, res) => {
   const { rows: priorities } = selectedAccountIds.length
     ? await pool.query(
         `SELECT pm.id, pm.subject, pm.from_address, pm.snippet, pm.web_link, pm.pinned,
-                a.email AS account_email
+                a.email AS account_email, a.provider AS account_provider
          FROM processed_messages pm
          JOIN accounts a ON a.id = pm.account_id
          WHERE pm.label = 'urgent' AND pm.done = $1 AND pm.account_id = ANY($2)
@@ -220,7 +220,15 @@ app.get("/", async (req, res) => {
             ${p.snippet ? `<div class="priority-snippet">${p.snippet}</div>` : ""}
           </div>
           <div class="priority-actions">
-            ${p.web_link ? `<a href="${p.web_link}" target="_blank" rel="noopener">Open</a>` : ""}
+            ${
+              p.web_link
+                ? `<a href="${
+                    p.account_provider === "outlook"
+                      ? p.web_link + (p.web_link.includes("?") ? "&" : "?") + "login_hint=" + encodeURIComponent(p.account_email)
+                      : p.web_link
+                  }" target="_blank" rel="noopener">Open</a>`
+                : ""
+            }
             ${
               showDone
                 ? `<form method="POST" action="/priorities/${p.id}/undone" style="display:inline;">
