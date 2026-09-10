@@ -12,6 +12,7 @@ import { pollAllAccounts } from "./src/poller.js";
 import { bulkSortRecent } from "./src/bulkSort.js";
 import { checkAllFollowUps } from "./src/followUp.js";
 import { checkAllDraftEdits } from "./src/learning.js";
+import { scanForInvoices } from "./src/invoiceScan.js";
 import { listCustomFiles, getCustomFilesContext } from "./src/customFiles.js";
 import {
   classifyChatIntent,
@@ -459,10 +460,45 @@ app.get("/invoices", async (req, res) => {
       ${showPaid ? "Invoices you've marked paid." : "Bills from vendors, with amount and due date pulled out automatically."}
       ${showPaid ? `<a href="/invoices" style="margin-left:8px;">← Back to unpaid</a>` : `<a href="/invoices?view=paid" style="margin-left:8px;">View paid →</a>`}
     </p>
+
+    ${req.query.scanning ? `<div class="saved-banner">Scanning recent mail for invoices in the background — check back in a few minutes.</div><br/>` : ""}
+
+    ${
+      accounts.length
+        ? `<form method="POST" action="/invoices/scan" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:20px;">
+             <select name="account_id" required style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
+               <option value="">Scan which account?</option>
+               ${accounts.map((a) => `<option value="${a.id}">${a.email}</option>`).join("")}
+             </select>
+             <select name="limit" style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
+               <option value="100">Last 100 messages</option>
+               <option value="300" selected>Last 300 messages</option>
+               <option value="1000">Last 1000 messages</option>
+             </select>
+             <button type="submit">Scan for invoices</button>
+             <span class="section-help" style="margin:0;">Looks through existing mail — read or unread — not just what's arrived since this feature was added.</span>
+           </form>`
+        : ""
+    }
+
     <div class="priority-list">${invoiceListHtml}</div>
   `;
 
   res.send(renderLayout({ title: "Invoices", activeAccountId: null, accounts, body }));
+});
+
+app.post("/invoices/scan", async (req, res) => {
+  const { rows } = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [
+    req.body.account_id,
+  ]);
+  const account = rows[0];
+  if (account) {
+    const limit = Number(req.body.limit) || 300;
+    scanForInvoices(account, limit).catch((err) =>
+      console.error(`Invoice scan failed for ${account.email}:`, err)
+    );
+  }
+  res.redirect("/invoices?scanning=1");
 });
 
 app.post("/invoices/:id/paid", async (req, res) => {

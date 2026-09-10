@@ -374,3 +374,24 @@ ${body}`,
     return { vendor: "", amount: null, currency: "", dueDate: "", invoiceNumber: "" };
   }
 }
+
+// Cheap yes/no check used when scanning historical mail for invoices — much cheaper than
+// running the full 5-way classifyEmail on every old message.
+export async function isInvoiceEmail(subject, snippet) {
+  const msg = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 10,
+    messages: [
+      {
+        role: "user",
+        content: `Is this email a bill or invoice from a vendor/supplier requesting payment
+(something owed, not yet paid)? A receipt for something already paid does NOT count.
+Reply with only "yes" or "no".
+
+Subject: ${subject}
+Preview: ${snippet}`,
+      },
+    ],
+  });
+  return msg.content[0]?.text?.trim().toLowerCase().startsWith("y");
+}
