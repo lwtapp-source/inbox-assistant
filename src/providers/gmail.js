@@ -56,6 +56,49 @@ export async function listUnreadMessageIds(account) {
   return (data.messages ?? []).map((m) => m.id);
 }
 
+// All recent inbox mail (read or unread) — used for the one-time bulk sort on connect.
+export async function listRecentMessageIds(account, limit = 300) {
+  const gmail = gmailClientFor(account);
+  const { data } = await gmail.users.messages.list({
+    userId: "me",
+    labelIds: ["INBOX"],
+    maxResults: Math.min(limit, 500), // Gmail's per-request cap
+  });
+  return (data.messages ?? []).map((m) => m.id);
+}
+
+// "Moving out of the inbox" in Gmail terms is archiving: drop the INBOX label while
+// keeping the AI/* label already applied, so it's still findable, just not in the inbox view.
+export async function moveOutOfInbox(account, id) {
+  const gmail = gmailClientFor(account);
+  await gmail.users.messages.modify({
+    userId: "me",
+    id,
+    requestBody: { removeLabelIds: ["INBOX"] },
+  });
+}
+
+// Prior messages in the same thread (oldest first), excluding the message being replied to,
+// so drafts can be written with full conversation context.
+export async function getThreadContext(account, detail) {
+  if (!detail.threadId) return [];
+  const gmail = gmailClientFor(account);
+  const { data } = await gmail.users.threads.get({
+    userId: "me",
+    id: detail.threadId,
+    format: "full",
+  });
+  const messages = data.messages ?? [];
+  return messages
+    .filter((m) => m.id !== detail.id)
+    .map((m) => {
+      const headers = Object.fromEntries(
+        (m.payload?.headers ?? []).map((h) => [h.name.toLowerCase(), h.value])
+      );
+      return { from: headers.from ?? "", body: extractPlainText(m) };
+    });
+}
+
 export async function getMessageDetail(account, id) {
   const gmail = gmailClientFor(account);
   const full = await gmail.users.messages.get({ userId: "me", id, format: "full" });
@@ -63,6 +106,7 @@ export async function getMessageDetail(account, id) {
     full.data.payload.headers.map((h) => [h.name.toLowerCase(), h.value])
   );
   return {
+    id: full.data.id,
     from: headers.from ?? "",
     subject: headers.subject ?? "",
     snippet: full.data.snippet ?? "",

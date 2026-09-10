@@ -29,6 +29,73 @@ export async function listUnreadMessageIds(account) {
   return (data.value ?? []).map((m) => m.id);
 }
 
+// All recent inbox mail (read or unread) — used for the one-time bulk sort on connect.
+export async function listRecentMessageIds(account, limit = 300) {
+  const params = new URLSearchParams({
+    $top: String(Math.min(limit, 999)), // Graph's practical per-request cap for messages
+    $orderby: "receivedDateTime desc",
+    $select: "id",
+  });
+  const data = await graphFetch(account, `/me/mailFolders/inbox/messages?${params}`);
+  return (data.value ?? []).map((m) => m.id);
+}
+
+const folderIdCache = new Map(); // `${accountId}:${label}` -> Graph folder id
+
+const FOLDER_NAMES = {
+  urgent: "AI To Respond",
+  fyi: "AI FYI",
+  low_priority: "AI Low Priority",
+};
+
+async function ensureFolder(account, label) {
+  const cacheKey = `${account.id}:${label}`;
+  if (folderIdCache.has(cacheKey)) return folderIdCache.get(cacheKey);
+
+  const displayName = FOLDER_NAMES[label] ?? `AI ${label}`;
+  const data = await graphFetch(account, `/me/mailFolders?$top=100`);
+  let folder = (data.value ?? []).find((f) => f.displayName === displayName);
+
+  if (!folder) {
+    folder = await graphFetch(account, `/me/mailFolders`, {
+      method: "POST",
+      body: JSON.stringify({ displayName }),
+    });
+  }
+
+  folderIdCache.set(cacheKey, folder.id);
+  return folder.id;
+}
+
+// Moves a message out of the inbox into a category-specific folder (mirrors Fyxer's
+// "move out of my inbox" toggle — the label/category is separate from this).
+export async function moveOutOfInbox(account, id, label) {
+  const folderId = await ensureFolder(account, label);
+  await graphFetch(account, `/me/messages/${id}/move`, {
+    method: "POST",
+    body: JSON.stringify({ destinationId: folderId }),
+  });
+}
+
+// Prior messages in the same thread (oldest first), excluding the message being replied to,
+// so drafts can be written with full conversation context.
+export async function getThreadContext(account, detail) {
+  if (!detail.conversationId) return [];
+  const filterValue = detail.conversationId.replace(/'/g, "''");
+  const params = new URLSearchParams({
+    $filter: `conversationId eq '${filterValue}'`,
+    $orderby: "receivedDateTime asc",
+    $select: "from,body,receivedDateTime",
+  });
+  const data = await graphFetch(account, `/me/messages?${params}`);
+  return (data.value ?? [])
+    .filter((m) => m.id !== detail._graphId)
+    .map((m) => ({
+      from: m.from?.emailAddress?.address ?? "",
+      body: m.body?.content ?? "",
+    }));
+}
+
 export async function getMessageDetail(account, id) {
   const params = new URLSearchParams({
     $select: "subject,from,bodyPreview,body,conversationId,internetMessageId",
