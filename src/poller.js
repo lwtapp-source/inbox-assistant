@@ -38,7 +38,9 @@ async function getOrRefreshVoiceProfile(account, provider) {
 function shouldMove(account, label) {
   if (label === "urgent") return account.move_urgent;
   if (label === "fyi") return account.move_fyi;
-  return account.move_low_priority;
+  if (label === "marketing") return account.move_marketing;
+  if (label === "notifications") return account.move_notifications;
+  return true; // unknown label — safe default is to file it away
 }
 
 // Matches Fyxer's "custom rule to guarantee drafts every time" for specific contacts —

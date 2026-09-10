@@ -23,7 +23,9 @@ export async function initSchema() {
       always_draft_senders TEXT,        -- newline/comma-separated emails or domains that always get a draft
       move_urgent BOOLEAN DEFAULT false,       -- move "urgent"-labeled mail out of the inbox into a folder
       move_fyi BOOLEAN DEFAULT true,           -- move "fyi"-labeled mail out of the inbox into a folder
-      move_low_priority BOOLEAN DEFAULT true,  -- move "low_priority"-labeled mail out of the inbox into a folder
+      move_marketing BOOLEAN DEFAULT true,     -- move "marketing"-labeled mail out of the inbox into a folder
+      move_notifications BOOLEAN DEFAULT true, -- move "notifications"-labeled mail out of the inbox into a folder
+      move_low_priority BOOLEAN DEFAULT true,  -- legacy column, kept for old data; no longer written to
       created_at TIMESTAMPTZ DEFAULT now()
     );
 
@@ -32,6 +34,8 @@ export async function initSchema() {
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS always_draft_senders TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_urgent BOOLEAN DEFAULT false;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_fyi BOOLEAN DEFAULT true;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_marketing BOOLEAN DEFAULT true;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_notifications BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_low_priority BOOLEAN DEFAULT true;
     ALTER TABLE accounts ALTER COLUMN move_fyi SET DEFAULT true;
 

@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = "claude-sonnet-4-6";
 
-// Cheap, fast triage: urgent / fyi / low_priority
+// Triage into Fyxer's real granularity: urgent (To Respond), fyi, marketing, or notifications.
 export async function classifyEmail({ subject, from, snippet, customInstructions }) {
   const instructionsBlock = customInstructions?.trim()
     ? `\nThe inbox owner has given these additional rules for how to classify mail — follow them:\n${customInstructions.trim()}\n`
@@ -15,7 +15,12 @@ export async function classifyEmail({ subject, from, snippet, customInstructions
     messages: [
       {
         role: "user",
-        content: `Classify this email into exactly one label: urgent, fyi, or low_priority.
+        content: `Classify this email into exactly one label: urgent, fyi, marketing, or notifications.
+- urgent: needs a human reply
+- fyi: informational, no reply needed, but not marketing or an automated notification
+- marketing: promotional content, newsletters, sales/marketing emails
+- notifications: automated system or app notifications — calendar reminders, receipts,
+  service alerts, app/tool notifications — not marketing, not something a human wrote to you
 Reply with only the label, nothing else.
 ${instructionsBlock}
 From: ${from}
@@ -25,7 +30,7 @@ Preview: ${snippet}`,
     ],
   });
   const label = msg.content[0]?.text?.trim().toLowerCase();
-  return ["urgent", "fyi", "low_priority"].includes(label) ? label : "fyi";
+  return ["urgent", "fyi", "marketing", "notifications"].includes(label) ? label : "fyi";
 }
 
 // Summarizes someone's writing style from a batch of their own sent emails.
