@@ -1,5 +1,6 @@
 import { pool } from "./db.js";
 import { classifyEmail, draftReply, buildVoiceProfile } from "./ai.js";
+import { getCustomFilesContext } from "./customFiles.js";
 import * as gmailProvider from "./providers/gmail.js";
 import * as outlookProvider from "./providers/outlook.js";
 
@@ -97,6 +98,7 @@ export async function pollAccount(account) {
         incomingEmail: detail,
         threadContext,
         toneInstructions: account.tone_instructions,
+        filesContext: await getCustomFilesContext(account.id),
       });
       const finalText = account.signature?.trim()
         ? `${replyText}\n\n${account.signature.trim()}`

@@ -59,7 +59,14 @@ ${sample}`,
 // same thread (oldest first), giving the draft full conversation awareness.
 // toneInstructions is free-text writing-style guidance the person set explicitly
 // (separate from the auto-learned voice profile) — e.g. "I'm concise and direct."
-export async function draftReply({ voiceProfile, incomingEmail, threadContext, toneInstructions }) {
+// filesContext is a pre-formatted block of uploaded reference material (see customFiles.js).
+export async function draftReply({
+  voiceProfile,
+  incomingEmail,
+  threadContext,
+  toneInstructions,
+  filesContext,
+}) {
   const threadBlock =
     threadContext && threadContext.length
       ? `\nEARLIER MESSAGES IN THIS THREAD (oldest first):\n${threadContext
@@ -81,7 +88,7 @@ export async function draftReply({ voiceProfile, incomingEmail, threadContext, t
 
 VOICE PROFILE:
 ${voiceProfile || "No profile yet — use a neutral, professional tone."}
-${toneBlock}${threadBlock}
+${toneBlock}${threadBlock}${filesContext || ""}
 EMAIL TO REPLY TO:
 From: ${incomingEmail.from}
 Subject: ${incomingEmail.subject}
