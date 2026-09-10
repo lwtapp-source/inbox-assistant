@@ -85,7 +85,7 @@ app.get("/health", (_req, res) => res.send("ok"));
 app.get("/settings/:id", async (req, res) => {
   const { rows } = await pool.query(
     `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders,
-            move_urgent, move_fyi, move_low_priority
+            move_urgent, move_fyi, move_marketing, move_notifications
      FROM accounts WHERE id = $1`,
     [req.params.id]
   );
@@ -102,7 +102,7 @@ app.get("/settings/:id", async (req, res) => {
       <p>Write plain-language rules for how mail in this inbox should be classified.
       These get folded into the classification prompt alongside the subject/sender/preview
       of each email. Example: "Emails from clients or referring vets are always urgent.
-      Newsletters and marketing are always low_priority. Anything mentioning an invoice is fyi."</p>
+      Newsletters and marketing are always marketing. Anything mentioning an invoice is fyi."</p>
       <textarea name="custom_instructions" rows="8" cols="80">${
         account.custom_instructions ?? ""
       }</textarea>
@@ -118,7 +118,7 @@ app.get("/settings/:id", async (req, res) => {
       <h2>Always draft for these senders</h2>
       <p>One email or domain per line (e.g. <code>manager@sandhillsvet.com</code> or
       <code>@keysupplier.com</code>). Mail from these senders always gets a draft, even if it
-      would otherwise be classified as fyi or low_priority.</p>
+      would otherwise be classified as fyi, marketing, or notifications.</p>
       <textarea name="always_draft_senders" rows="4" cols="80">${
         account.always_draft_senders ?? ""
       }</textarea>
@@ -126,10 +126,11 @@ app.get("/settings/:id", async (req, res) => {
       <h2>Move out of inbox</h2>
       <p>For each category, choose whether matching mail should be moved into its own
       folder (checked) or stay visible in the main inbox (unchecked) — like Fyxer's
-      "move out of my inbox" toggle.</p>
+      "move out of my inbox" toggle. Only Urgent/To Respond mail gets a drafted reply.</p>
       <p>${checkbox("move_urgent", account.move_urgent)} Urgent / To Respond</p>
       <p>${checkbox("move_fyi", account.move_fyi)} FYI</p>
-      <p>${checkbox("move_low_priority", account.move_low_priority)} Low priority</p>
+      <p>${checkbox("move_marketing", account.move_marketing)} Marketing</p>
+      <p>${checkbox("move_notifications", account.move_notifications)} Notifications</p>
 
       <br/>
       <button type="submit">Save</button>
@@ -142,15 +143,16 @@ app.post("/settings/:id", async (req, res) => {
   await pool.query(
     `UPDATE accounts
      SET custom_instructions = $1, tone_instructions = $2, always_draft_senders = $3,
-         move_urgent = $4, move_fyi = $5, move_low_priority = $6
-     WHERE id = $7`,
+         move_urgent = $4, move_fyi = $5, move_marketing = $6, move_notifications = $7
+     WHERE id = $8`,
     [
       req.body.custom_instructions ?? "",
       req.body.tone_instructions ?? "",
       req.body.always_draft_senders ?? "",
       !!req.body.move_urgent,
       !!req.body.move_fyi,
-      !!req.body.move_low_priority,
+      !!req.body.move_marketing,
+      !!req.body.move_notifications,
       req.params.id,
     ]
   );
