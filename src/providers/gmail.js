@@ -129,7 +129,7 @@ export async function applyLabel(account, id, labelName) {
 
 export async function createDraftReply(account, { detail, body }) {
   const gmail = gmailClientFor(account);
-  await gmail.users.drafts.create({
+  const res = await gmail.users.drafts.create({
     userId: "me",
     requestBody: {
       message: {
@@ -143,6 +143,7 @@ export async function createDraftReply(account, { detail, body }) {
       },
     },
   });
+  return { draftId: res.data.id, messageId: res.data.message?.id };
 }
 
 export async function listRecentSentBodies(account, limit = 40) {
@@ -279,4 +280,25 @@ export async function createNewDraft(account, { to, subject, body }) {
     .replace(/=+$/, "");
   await gmail.users.drafts.create({ userId: "me", requestBody: { message: { raw } } });
   return { webLink: "https://mail.google.com/mail/u/0/#drafts" };
+}
+
+// ---------- Passive learning: detect what was actually sent vs what we drafted ----------
+
+// Looks for a message the account owner sent in this thread after `afterDate`. Returns its
+// plain-text body, or null if nothing's been sent yet.
+export async function findSentVersionInThread(account, threadId, afterDate) {
+  if (!threadId) return null;
+  const gmail = gmailClientFor(account);
+  const { data } = await gmail.users.threads.get({ userId: "me", id: threadId, format: "full" });
+  const messages = data.messages ?? [];
+  const afterMs = new Date(afterDate).getTime();
+
+  for (const m of messages) {
+    const isSent = (m.labelIds ?? []).includes("SENT");
+    const msgMs = Number(m.internalDate);
+    if (isSent && msgMs > afterMs) {
+      return extractPlainText(m);
+    }
+  }
+  return null;
 }

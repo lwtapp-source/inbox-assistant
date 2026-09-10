@@ -134,6 +134,8 @@ export async function createDraftReply(account, { detail, body }) {
     method: "PATCH",
     body: JSON.stringify({ body: { contentType: "Text", content: body } }),
   });
+
+  return { draftId: draft.id, messageId: draft.id };
 }
 
 export async function listRecentSentBodies(account, limit = 40) {
@@ -253,4 +255,22 @@ export async function createNewDraft(account, { to, subject, body }) {
     }),
   });
   return { webLink: draft.webLink ?? "" };
+}
+
+// ---------- Passive learning: detect what was actually sent vs what we drafted ----------
+
+// Looks for a message the account owner sent in this conversation after `afterDate`.
+// Returns its plain-text-ish body, or null if nothing's been sent yet.
+export async function findSentVersionInThread(account, conversationId, afterDate) {
+  if (!conversationId) return null;
+  const filterValue = conversationId.replace(/'/g, "''");
+  const afterIso = new Date(afterDate).toISOString();
+  const params = new URLSearchParams({
+    $filter: `conversationId eq '${filterValue}' and sentDateTime gt ${afterIso}`,
+    $orderby: "sentDateTime asc",
+    $select: "body,sentDateTime",
+  });
+  const data = await graphFetch(account, `/me/mailFolders/sentitems/messages?${params}`);
+  const first = (data.value ?? [])[0];
+  return first?.body?.content ?? null;
 }

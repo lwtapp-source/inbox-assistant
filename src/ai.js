@@ -66,6 +66,7 @@ export async function draftReply({
   threadContext,
   toneInstructions,
   filesContext,
+  learnedStyleNotes,
 }) {
   const threadBlock =
     threadContext && threadContext.length
@@ -78,6 +79,10 @@ export async function draftReply({
     ? `\nThe inbox owner has given this explicit guidance on how they like to write — follow it:\n${toneInstructions.trim()}\n`
     : "";
 
+  const learnedBlock = learnedStyleNotes?.trim()
+    ? `\nLearned from past edits — the inbox owner has consistently made these adjustments to drafts, apply them:\n${learnedStyleNotes.trim()}\n`
+    : "";
+
   const msg = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 600,
@@ -88,7 +93,7 @@ export async function draftReply({
 
 VOICE PROFILE:
 ${voiceProfile || "No profile yet — use a neutral, professional tone."}
-${toneBlock}${threadBlock}${filesContext || ""}
+${toneBlock}${learnedBlock}${threadBlock}${filesContext || ""}
 EMAIL TO REPLY TO:
 From: ${incomingEmail.from}
 Subject: ${incomingEmail.subject}
@@ -182,9 +187,19 @@ ${context}`,
 
 // Drafts a brand-new email (not a reply), using the same voice/tone/files context as regular
 // drafts, but no incoming email to respond to — just plain-language instructions.
-export async function draftFromScratch({ voiceProfile, toneInstructions, filesContext, instructions }) {
+export async function draftFromScratch({
+  voiceProfile,
+  toneInstructions,
+  filesContext,
+  instructions,
+  learnedStyleNotes,
+}) {
   const toneBlock = toneInstructions?.trim()
     ? `\nThe inbox owner has given this explicit guidance on how they like to write — follow it:\n${toneInstructions.trim()}\n`
+    : "";
+
+  const learnedBlock = learnedStyleNotes?.trim()
+    ? `\nLearned from past edits — the inbox owner has consistently made these adjustments to drafts, apply them:\n${learnedStyleNotes.trim()}\n`
     : "";
 
   const msg = await anthropic.messages.create({
@@ -197,7 +212,7 @@ export async function draftFromScratch({ voiceProfile, toneInstructions, filesCo
 
 VOICE PROFILE:
 ${voiceProfile || "No profile yet — use a neutral, professional tone."}
-${toneBlock}${filesContext || ""}
+${toneBlock}${learnedBlock}${filesContext || ""}
 WHAT THE EMAIL SHOULD COVER:
 ${instructions}
 
@@ -206,4 +221,43 @@ Write only the email body text, no subject line, no commentary.`,
     ],
   });
   return msg.content[0]?.text ?? "";
+}
+
+// ---------- Passive learning from edits ----------
+
+// Compares what we drafted to what the person actually sent, and returns an updated,
+// concise set of style notes to fold into future drafts. If the sent version is
+// essentially unchanged, returns the existing notes untouched.
+export async function analyzeEdit({ originalDraft, sentVersion, existingNotes }) {
+  const msg = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 400,
+    messages: [
+      {
+        role: "user",
+        content: `Compare the draft below (written by an AI assistant) to what the person
+actually sent. The sent version may include quoted reply history or a signature —
+ignore those and focus on the new reply content itself.
+
+Identify concrete, reusable adjustments the assistant should make to future drafts:
+things like sign-off preference, phrases they add or remove, tone shifts, length
+preference, structural changes. Be specific and concise.
+
+EXISTING STYLE NOTES (update these, don't just append — keep the list short and
+non-redundant, at most 6 bullet points total):
+${existingNotes || "(none yet)"}
+
+AI DRAFT:
+${originalDraft}
+
+WHAT THEY ACTUALLY SENT:
+${sentVersion}
+
+Reply with only the updated style notes as a short bullet list, nothing else. If the
+sent version is essentially unchanged from the draft, reply with exactly the existing
+notes, unchanged.`,
+      },
+    ],
+  });
+  return msg.content[0]?.text?.trim() ?? existingNotes ?? "";
 }

@@ -99,12 +99,23 @@ export async function pollAccount(account) {
         threadContext,
         toneInstructions: account.tone_instructions,
         filesContext: await getCustomFilesContext(account.id),
+        learnedStyleNotes: account.learned_style_notes,
       });
       const finalText = account.signature?.trim()
         ? `${replyText}\n\n${account.signature.trim()}`
         : replyText;
-      await provider.createDraftReply(account, { detail, body: finalText });
+      const created = await provider.createDraftReply(account, { detail, body: finalText });
       draftCreated = true;
+
+      const threadKey = detail.threadId || detail.conversationId;
+      if (created?.draftId && threadKey) {
+        await pool.query(
+          `INSERT INTO draft_tracking (account_id, draft_message_id, thread_key, original_text)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (account_id, draft_message_id) DO NOTHING`,
+          [account.id, created.draftId, threadKey, replyText]
+        );
+      }
     }
 
     await pool.query(

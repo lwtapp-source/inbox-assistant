@@ -22,6 +22,7 @@ export async function initSchema() {
       tone_instructions TEXT,           -- free-text writing-style guidance, folded into the drafting prompt
       always_draft_senders TEXT,        -- newline/comma-separated emails or domains that always get a draft
       signature TEXT,                   -- plain-text signature appended to every generated draft
+      learned_style_notes TEXT,         -- auto-updated notes from comparing drafts to what was actually sent
       move_urgent BOOLEAN DEFAULT false,       -- move "urgent"-labeled mail out of the inbox into a folder
       move_fyi BOOLEAN DEFAULT true,           -- move "fyi"-labeled mail out of the inbox into a folder
       move_marketing BOOLEAN DEFAULT true,     -- move "marketing"-labeled mail out of the inbox into a folder
@@ -34,6 +35,7 @@ export async function initSchema() {
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS tone_instructions TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS always_draft_senders TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS signature TEXT;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS learned_style_notes TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_urgent BOOLEAN DEFAULT false;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_fyi BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_marketing BOOLEAN DEFAULT true;
@@ -83,6 +85,17 @@ export async function initSchema() {
       filename TEXT NOT NULL,
       content TEXT NOT NULL,            -- extracted plain text (PDFs are parsed on upload)
       uploaded_at TIMESTAMPTZ DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS draft_tracking (
+      id SERIAL PRIMARY KEY,
+      account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+      draft_message_id TEXT NOT NULL,
+      thread_key TEXT,                  -- Gmail threadId or Outlook conversationId
+      original_text TEXT NOT NULL,      -- what we generated, before signature
+      status TEXT NOT NULL DEFAULT 'pending', -- pending -> learned / resolved_unchanged / expired
+      created_at TIMESTAMPTZ DEFAULT now(),
+      UNIQUE(account_id, draft_message_id)
     );
   `);
 }

@@ -10,6 +10,7 @@ import { getAuthUrl as getOutlookAuthUrl, handleOAuthCallback as handleOutlookCa
 import { pollAllAccounts } from "./src/poller.js";
 import { bulkSortRecent } from "./src/bulkSort.js";
 import { checkAllFollowUps } from "./src/followUp.js";
+import { checkAllDraftEdits } from "./src/learning.js";
 import { listCustomFiles, getCustomFilesContext } from "./src/customFiles.js";
 import {
   classifyChatIntent,
@@ -250,6 +251,7 @@ app.post("/chat", async (req, res) => {
               toneInstructions: account.tone_instructions,
               filesContext,
               instructions: extracted.instructions || message,
+              learnedStyleNotes: account.learned_style_notes,
             });
             const finalBody = account.signature?.trim()
               ? `${bodyText}\n\n${account.signature.trim()}`
@@ -405,7 +407,8 @@ app.get("/poll", async (req, res) => {
   }
   const pollResults = await pollAllAccounts();
   const followUpResults = await checkAllFollowUps();
-  res.json({ poll: pollResults, followUps: followUpResults });
+  const learningResults = await checkAllDraftEdits();
+  res.json({ poll: pollResults, followUps: followUpResults, learning: learningResults });
 });
 
 app.get("/health", (_req, res) => res.send("ok"));
@@ -423,7 +426,7 @@ app.get("/settings/:id", async (req, res) => {
   const accounts = await getAccounts();
   const { rows } = await pool.query(
     `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders, signature,
-            move_urgent, move_fyi, move_marketing, move_notifications
+            learned_style_notes, move_urgent, move_fyi, move_marketing, move_notifications
      FROM accounts WHERE id = $1`,
     [req.params.id]
   );
@@ -553,6 +556,24 @@ app.get("/settings/:id", async (req, res) => {
       </form>
     </div>
 
+    <div class="section">
+      <h2>Learned from your edits</h2>
+      <p class="section-help">
+        Every time a draft gets edited before sending, Claude compares what it wrote to
+        what you actually sent and updates these notes automatically — no need to write
+        anything here yourself. Checked about an hour after each draft, so it has time to
+        see what you actually sent.
+      </p>
+      ${
+        account.learned_style_notes?.trim()
+          ? `<p style="white-space:pre-wrap; border:1px solid var(--border); border-radius:var(--radius); padding:14px; background:var(--surface);">${account.learned_style_notes}</p>
+             <form method="POST" action="/settings/${account.id}/learned-notes/clear" style="margin-top:10px;">
+               <button type="submit" class="link-button danger">Clear learned notes</button>
+             </form>`
+          : `<p class="section-help" style="margin:0;">Nothing learned yet — this fills in as you edit and send drafts.</p>`
+      }
+    </div>
+
     <script>
       document.querySelectorAll('.toggle input[type=checkbox]').forEach((el) => {
         el.addEventListener('change', () => {
@@ -614,6 +635,13 @@ app.post("/settings/:id/files/:fileId/delete", async (req, res) => {
   res.redirect(`/settings/${req.params.id}`);
 });
 
+app.post("/settings/:id/learned-notes/clear", async (req, res) => {
+  await pool.query(`UPDATE accounts SET learned_style_notes = NULL WHERE id = $1`, [
+    req.params.id,
+  ]);
+  res.redirect(`/settings/${req.params.id}`);
+});
+
 app.post("/settings/:id", async (req, res) => {
   await pool.query(
     `UPDATE accounts
@@ -649,6 +677,10 @@ async function start() {
     console.log("Checking follow-ups...");
     const followUpResults = await checkAllFollowUps();
     console.log(followUpResults);
+
+    console.log("Checking draft edits (passive learning)...");
+    const learningResults = await checkAllDraftEdits();
+    console.log(learningResults);
   }, intervalMs);
 }
 
