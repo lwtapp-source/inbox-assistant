@@ -67,6 +67,7 @@ export async function draftReply({
   toneInstructions,
   filesContext,
   learnedStyleNotes,
+  availabilityContext,
 }) {
   const threadBlock =
     threadContext && threadContext.length
@@ -83,6 +84,11 @@ export async function draftReply({
     ? `\nLearned from past edits — the inbox owner has consistently made these adjustments to drafts, apply them:\n${learnedStyleNotes.trim()}\n`
     : "";
 
+  const availabilityBlock = availabilityContext?.trim()
+    ? `\nThe inbox owner is genuinely free at these times — this email seems to need a meeting
+time, so naturally propose 2-3 of these as options (you don't need to list them all):\n${availabilityContext.trim()}\n`
+    : "";
+
   const msg = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 600,
@@ -93,7 +99,7 @@ export async function draftReply({
 
 VOICE PROFILE:
 ${voiceProfile || "No profile yet — use a neutral, professional tone."}
-${toneBlock}${learnedBlock}${threadBlock}${filesContext || ""}
+${toneBlock}${learnedBlock}${availabilityBlock}${threadBlock}${filesContext || ""}
 EMAIL TO REPLY TO:
 From: ${incomingEmail.from}
 Subject: ${incomingEmail.subject}
@@ -260,4 +266,25 @@ notes, unchanged.`,
     ],
   });
   return msg.content[0]?.text?.trim() ?? existingNotes ?? "";
+}
+
+// ---------- Scheduling ----------
+
+// Cheap check: does this email need someone to propose or confirm a meeting time?
+export async function needsScheduling(subject, snippet) {
+  const msg = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 10,
+    messages: [
+      {
+        role: "user",
+        content: `Does replying to this email require proposing or confirming a meeting/call
+time? Reply with only "yes" or "no".
+
+Subject: ${subject}
+Preview: ${snippet}`,
+      },
+    ],
+  });
+  return msg.content[0]?.text?.trim().toLowerCase().startsWith("y");
 }

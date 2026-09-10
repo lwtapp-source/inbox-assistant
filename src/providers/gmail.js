@@ -1,4 +1,4 @@
-import { gmailClientFor } from "../auth/google.js";
+import { gmailClientFor, calendarClientFor } from "../auth/google.js";
 
 const labelIdCache = new Map(); // `${accountId}:${labelName}` -> Gmail label id
 
@@ -301,4 +301,21 @@ export async function findSentVersionInThread(account, threadId, afterDate) {
     }
   }
   return null;
+}
+
+// ---------- Scheduling: calendar availability ----------
+
+// Returns busy time ranges [{start, end}] (ISO strings) on the primary calendar between
+// timeMin and timeMax (both ISO strings).
+export async function getBusyEvents(account, timeMin, timeMax) {
+  const calendar = calendarClientFor(account);
+  const { data } = await calendar.freebusy.query({
+    requestBody: {
+      timeMin,
+      timeMax,
+      items: [{ id: "primary" }],
+    },
+  });
+  const busy = data.calendars?.primary?.busy ?? [];
+  return busy.map((b) => ({ start: b.start, end: b.end }));
 }

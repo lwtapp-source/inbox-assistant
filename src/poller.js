@@ -1,6 +1,7 @@
 import { pool } from "./db.js";
-import { classifyEmail, draftReply, buildVoiceProfile } from "./ai.js";
+import { classifyEmail, draftReply, buildVoiceProfile, needsScheduling } from "./ai.js";
 import { getCustomFilesContext } from "./customFiles.js";
+import { getAvailability, formatAvailabilityWindows } from "./scheduling.js";
 import * as gmailProvider from "./providers/gmail.js";
 import * as outlookProvider from "./providers/outlook.js";
 
@@ -93,6 +94,17 @@ export async function pollAccount(account) {
       const threadContext = provider.getThreadContext
         ? await provider.getThreadContext(account, detail)
         : [];
+
+      let availabilityContext = "";
+      try {
+        if (await needsScheduling(detail.subject, detail.snippet)) {
+          const windows = await getAvailability(account);
+          availabilityContext = formatAvailabilityWindows(windows, account.timezone);
+        }
+      } catch (err) {
+        console.error(`Scheduling check failed for ${account.email}:`, err.message);
+      }
+
       const replyText = await draftReply({
         voiceProfile,
         incomingEmail: detail,
@@ -100,6 +112,7 @@ export async function pollAccount(account) {
         toneInstructions: account.tone_instructions,
         filesContext: await getCustomFilesContext(account.id),
         learnedStyleNotes: account.learned_style_notes,
+        availabilityContext,
       });
       const finalText = account.signature?.trim()
         ? `${replyText}\n\n${account.signature.trim()}`

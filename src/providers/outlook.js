@@ -274,3 +274,22 @@ export async function findSentVersionInThread(account, conversationId, afterDate
   const first = (data.value ?? [])[0];
   return first?.body?.content ?? null;
 }
+
+// ---------- Scheduling: calendar availability ----------
+
+// Returns busy time ranges [{start, end}] (ISO strings) between timeMin and timeMax
+// (both ISO strings), from the primary calendar.
+export async function getBusyEvents(account, timeMin, timeMax) {
+  const params = new URLSearchParams({
+    startDateTime: timeMin,
+    endDateTime: timeMax,
+    $select: "start,end,showAs",
+    $top: "100",
+  });
+  const data = await graphFetch(account, `/me/calendarView?${params}`, {
+    headers: { Prefer: 'outlook.timezone="UTC"' },
+  });
+  return (data.value ?? [])
+    .filter((e) => e.showAs && e.showAs !== "free")
+    .map((e) => ({ start: e.start?.dateTime + "Z", end: e.end?.dateTime + "Z" }));
+}

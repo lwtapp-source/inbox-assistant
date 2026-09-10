@@ -23,6 +23,11 @@ export async function initSchema() {
       always_draft_senders TEXT,        -- newline/comma-separated emails or domains that always get a draft
       signature TEXT,                   -- plain-text signature appended to every generated draft
       learned_style_notes TEXT,         -- auto-updated notes from comparing drafts to what was actually sent
+      timezone TEXT DEFAULT 'America/New_York',  -- IANA timezone used for availability
+      work_start_hour INTEGER DEFAULT 9,          -- meeting hours window, 24h clock
+      work_end_hour INTEGER DEFAULT 17,
+      notice_hours INTEGER DEFAULT 24,            -- minimum notice before a proposed slot
+      scheduling_days_ahead INTEGER DEFAULT 7,    -- how many days out to look for availability
       move_urgent BOOLEAN DEFAULT false,       -- move "urgent"-labeled mail out of the inbox into a folder
       move_fyi BOOLEAN DEFAULT true,           -- move "fyi"-labeled mail out of the inbox into a folder
       move_marketing BOOLEAN DEFAULT true,     -- move "marketing"-labeled mail out of the inbox into a folder
@@ -36,6 +41,11 @@ export async function initSchema() {
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS always_draft_senders TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS signature TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS learned_style_notes TEXT;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS timezone TEXT DEFAULT 'America/New_York';
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS work_start_hour INTEGER DEFAULT 9;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS work_end_hour INTEGER DEFAULT 17;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS notice_hours INTEGER DEFAULT 24;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS scheduling_days_ahead INTEGER DEFAULT 7;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_urgent BOOLEAN DEFAULT false;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_fyi BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_marketing BOOLEAN DEFAULT true;

@@ -426,7 +426,8 @@ app.get("/settings/:id", async (req, res) => {
   const accounts = await getAccounts();
   const { rows } = await pool.query(
     `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders, signature,
-            learned_style_notes, move_urgent, move_fyi, move_marketing, move_notifications
+            learned_style_notes, timezone, work_start_hour, work_end_hour, notice_hours,
+            scheduling_days_ahead, move_urgent, move_fyi, move_marketing, move_notifications
      FROM accounts WHERE id = $1`,
     [req.params.id]
   );
@@ -529,6 +530,34 @@ app.get("/settings/:id", async (req, res) => {
           set it here if you want one included.
         </p>
         <textarea name="signature" rows="4">${account.signature ?? ""}</textarea>
+      </div>
+
+      <div class="section">
+        <h2>Scheduling</h2>
+        <p class="section-help">
+          When a reply needs a meeting time, Claude checks your real calendar and proposes
+          actual free times instead of guessing. Requires calendar access — if you connected
+          this account before this feature existed, you'll need to reconnect it once for the
+          calendar permission to take effect (use "Connect an ${account.provider === "google" ? "Gmail" : "Outlook"} account" again with the same address).
+        </p>
+        <p class="section-help" style="margin-top:14px;">Timezone (IANA name, e.g. America/New_York)</p>
+        <input type="text" name="timezone" value="${account.timezone ?? "America/New_York"}"
+          style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; width:220px;" />
+
+        <p class="section-help" style="margin-top:14px;">Working hours (24h)</p>
+        <input type="number" name="work_start_hour" value="${account.work_start_hour ?? 9}" min="0" max="23"
+          style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; width:70px;" />
+        <span style="color:var(--ink-soft);">to</span>
+        <input type="number" name="work_end_hour" value="${account.work_end_hour ?? 17}" min="1" max="24"
+          style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; width:70px;" />
+
+        <p class="section-help" style="margin-top:14px;">Minimum notice before a proposed slot (hours)</p>
+        <input type="number" name="notice_hours" value="${account.notice_hours ?? 24}" min="0" max="168"
+          style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; width:70px;" />
+
+        <p class="section-help" style="margin-top:14px;">How many days ahead to look for availability</p>
+        <input type="number" name="scheduling_days_ahead" value="${account.scheduling_days_ahead ?? 7}" min="1" max="30"
+          style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; width:70px;" />
       </div>
 
       <div class="section">
@@ -646,13 +675,20 @@ app.post("/settings/:id", async (req, res) => {
   await pool.query(
     `UPDATE accounts
      SET custom_instructions = $1, tone_instructions = $2, always_draft_senders = $3, signature = $4,
-         move_urgent = $5, move_fyi = $6, move_marketing = $7, move_notifications = $8
-     WHERE id = $9`,
+         timezone = $5, work_start_hour = $6, work_end_hour = $7, notice_hours = $8,
+         scheduling_days_ahead = $9,
+         move_urgent = $10, move_fyi = $11, move_marketing = $12, move_notifications = $13
+     WHERE id = $14`,
     [
       req.body.custom_instructions ?? "",
       req.body.tone_instructions ?? "",
       req.body.always_draft_senders ?? "",
       req.body.signature ?? "",
+      req.body.timezone?.trim() || "America/New_York",
+      Number(req.body.work_start_hour) || 9,
+      Number(req.body.work_end_hour) || 17,
+      Number(req.body.notice_hours) || 24,
+      Number(req.body.scheduling_days_ahead) || 7,
       !!req.body.move_urgent,
       !!req.body.move_fyi,
       !!req.body.move_marketing,

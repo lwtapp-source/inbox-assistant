@@ -4,6 +4,7 @@ import { pool } from "../db.js";
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify", // read + label + create drafts (NOT auto-send)
   "https://www.googleapis.com/auth/userinfo.email",
+  "https://www.googleapis.com/auth/calendar.readonly", // check availability for scheduling drafts
 ];
 
 export function newOAuthClient() {
@@ -49,4 +50,11 @@ export function gmailClientFor(account) {
   const client = newOAuthClient();
   client.setCredentials({ refresh_token: account.refresh_token });
   return google.gmail({ version: "v1", auth: client });
+}
+
+// Returns an authenticated Calendar API client for a stored account row
+export function calendarClientFor(account) {
+  const client = newOAuthClient();
+  client.setCredentials({ refresh_token: account.refresh_token });
+  return google.calendar({ version: "v3", auth: client });
 }
