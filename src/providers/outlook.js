@@ -99,7 +99,7 @@ export async function getThreadContext(account, detail) {
 
 export async function getMessageDetail(account, id) {
   const params = new URLSearchParams({
-    $select: "subject,from,bodyPreview,body,conversationId,internetMessageId",
+    $select: "subject,from,bodyPreview,body,conversationId,internetMessageId,webLink",
   });
   const m = await graphFetch(account, `/me/messages/${id}?${params}`);
   return {
@@ -109,6 +109,7 @@ export async function getMessageDetail(account, id) {
     body: m.body?.content ?? m.bodyPreview ?? "",
     conversationId: m.conversationId,
     messageIdHeader: m.internetMessageId,
+    webLink: m.webLink ?? "",
     _graphId: id,
   };
 }

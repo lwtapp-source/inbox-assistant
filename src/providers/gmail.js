@@ -113,6 +113,7 @@ export async function getMessageDetail(account, id) {
     body: extractPlainText(full.data),
     threadId: full.data.threadId,
     messageIdHeader: headers["message-id"],
+    webLink: `https://mail.google.com/mail/u/0/#all/${full.data.id}`,
   };
 }
 
