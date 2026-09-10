@@ -48,5 +48,18 @@ export async function initSchema() {
       processed_at TIMESTAMPTZ DEFAULT now(),
       UNIQUE(account_id, message_id)
     );
+
+    CREATE TABLE IF NOT EXISTS follow_ups (
+      id SERIAL PRIMARY KEY,
+      account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,         -- the sent message's id
+      thread_key TEXT NOT NULL,         -- Gmail threadId or Outlook conversationId
+      to_address TEXT,
+      sent_at TIMESTAMPTZ NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending', -- pending -> flagged -> resolved
+      flagged_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      UNIQUE(account_id, message_id)
+    );
   `);
 }
