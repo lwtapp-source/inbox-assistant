@@ -164,6 +164,24 @@ export async function initSchema() {
     );
   `);
 
+  // One-time cleanup (safe to run every startup — a no-op once caught up): Outlook
+  // message IDs used to change when a message moved between folders, which made the
+  // poller treat an already-processed email as brand new. Now fixed by requesting
+  // immutable IDs from Graph, but this clears out duplicates created before that fix.
+  try {
+    await pool.query(`
+      DELETE FROM processed_messages a
+      USING processed_messages b
+      WHERE a.account_id = b.account_id
+        AND a.subject = b.subject
+        AND a.from_address = b.from_address
+        AND a.snippet = b.snippet
+        AND a.id < b.id;
+    `);
+  } catch (err) {
+    console.error("Duplicate processed_messages cleanup failed (non-fatal):", err.message);
+  }
+
   // Isolated from the main schema block above: if the vector extension didn't install
   // (e.g. unsupported on this Postgres tier), this fails on its own without taking down
   // every other table. Semantic search just stays unavailable in that case.

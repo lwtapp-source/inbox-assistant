@@ -9,6 +9,10 @@ async function graphFetch(account, path, options = {}) {
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
+      // Without this, Graph message IDs can change when a message moves between
+      // folders (including our own moveOutOfInbox calls) — which made the poller treat
+      // an already-processed email as brand new and reprocess/duplicate it.
+      Prefer: 'IdType="ImmutableId"',
       ...options.headers,
     },
   });
