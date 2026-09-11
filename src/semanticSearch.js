@@ -1,9 +1,69 @@
 import { pool } from "./db.js";
-import { embedText, toVectorLiteral } from "./voyage.js";
+import { embedText, embedTexts, toVectorLiteral } from "./voyage.js";
 
 // Caps how much of an email we embed — keeps requests small and cheap; a summary-length
 // chunk captures the meaning of an email far better than raw length would suggest.
 const MAX_INDEX_CHARS = 4000;
+
+function buildIndexText(detail) {
+  return [detail.subject, detail.from, detail.snippet, detail.body]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, MAX_INDEX_CHARS);
+}
+
+// Embeds and stores a whole batch of messages in a single Voyage API call — far gentler
+// on rate limits than one call per email, which matters especially on Voyage's free tier
+// (3 requests/minute without a payment method on file). Returns the number actually
+// stored; never throws — a failed batch just means those emails aren't indexed yet, not
+// a broken scan.
+export async function indexMessagesBatch(account, items) {
+  const withText = items
+    .map((item) => ({ ...item, text: buildIndexText(item.detail) }))
+    .filter((item) => item.text.trim());
+  if (!withText.length) return 0;
+
+  let embeddings;
+  try {
+    embeddings = await embedTexts(
+      withText.map((item) => item.text),
+      "document"
+    );
+  } catch (err) {
+    console.error(`Batch embedding failed for ${account.email}:`, err.message);
+    return 0;
+  }
+  if (!embeddings) return 0; // no API key configured
+
+  let stored = 0;
+  for (let i = 0; i < withText.length; i++) {
+    const { detail, messageId } = withText[i];
+    const embedding = embeddings[i];
+    if (!embedding) continue;
+    try {
+      await pool.query(
+        `INSERT INTO email_embeddings
+           (account_id, message_id, subject, snippet, from_address, message_date, web_link, embedding)
+         VALUES ($1, $2, $3, $4, $5, now(), $6, $7::vector)
+         ON CONFLICT (account_id, message_id)
+         DO UPDATE SET subject = $3, snippet = $4, from_address = $5, web_link = $6, embedding = $7::vector`,
+        [
+          account.id,
+          messageId,
+          detail.subject ?? "",
+          detail.snippet ?? "",
+          detail.from ?? "",
+          detail.webLink ?? "",
+          toVectorLiteral(embedding),
+        ]
+      );
+      stored++;
+    } catch (err) {
+      console.error(`Storing embedding failed for ${account.email}:`, err.message);
+    }
+  }
+  return stored;
+}
 
 // Embeds one email and stores/updates it in the index. Silently does nothing if
 // semantic search isn't configured (no Voyage key) or the vector table doesn't exist
@@ -11,10 +71,7 @@ const MAX_INDEX_CHARS = 4000;
 // themselves. Never throws.
 export async function indexMessage(account, detail, messageId) {
   try {
-    const text = [detail.subject, detail.from, detail.snippet, detail.body]
-      .filter(Boolean)
-      .join("\n")
-      .slice(0, MAX_INDEX_CHARS);
+    const text = buildIndexText(detail);
     if (!text.trim()) return;
 
     const embedding = await embedText(text, "document");
