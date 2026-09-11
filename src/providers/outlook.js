@@ -86,12 +86,12 @@ export async function getThreadContext(account, detail) {
   const filterValue = detail.conversationId.replace(/'/g, "''");
   const params = new URLSearchParams({
     $filter: `conversationId eq '${filterValue}'`,
-    $orderby: "receivedDateTime asc",
     $select: "from,body,receivedDateTime",
   });
   const data = await graphFetch(account, `/me/messages?${params}`);
   return (data.value ?? [])
     .filter((m) => m.id !== detail._graphId)
+    .sort((a, b) => new Date(a.receivedDateTime) - new Date(b.receivedDateTime))
     .map((m) => ({
       from: m.from?.emailAddress?.address ?? "",
       body: m.body?.content ?? "",
