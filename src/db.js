@@ -178,11 +178,15 @@ export async function initSchema() {
         from_address TEXT,
         message_date TIMESTAMPTZ,
         web_link TEXT,
-        embedding vector(1024),
+        embedding vector(512),
         created_at TIMESTAMPTZ DEFAULT now(),
         UNIQUE(account_id, message_id)
       );
     `);
+    // Fixes a deployed table that was created with the wrong dimension (1024) before
+    // voyage-3-lite's actual output size (512) was confirmed — every insert against the
+    // old column silently failed, so there's no existing data at risk here.
+    await pool.query(`ALTER TABLE email_embeddings ALTER COLUMN embedding TYPE vector(512);`);
   } catch (err) {
     console.error("Could not create email_embeddings table (semantic search will be unavailable):", err.message);
   }

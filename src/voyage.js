@@ -1,4 +1,4 @@
-const VOYAGE_MODEL = "voyage-3-lite"; // 1024-dim output — must match the `vector(1024)` column in db.js
+const VOYAGE_MODEL = "voyage-3-lite"; // 512-dim output — must match the `vector(512)` column in db.js
 
 // Embeds a batch of texts in one request. Returns null (not an error) if no API key is
 // configured, so callers can treat "semantic search isn't set up" as a normal, expected
