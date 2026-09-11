@@ -120,6 +120,22 @@ function renderLayout({ title, activeAccountId, accounts, body }) {
         .join("")
     : `<div class="empty-note">No accounts yet</div>`;
 
+  const paletteDestinations = [
+    { label: "Top priorities", hint: "Home", url: "/" },
+    { label: "Completed items", hint: "Top priorities", url: "/?view=done" },
+    { label: "Chat", hint: "Search inbox or draft from scratch", url: "/chat" },
+    { label: "Invoices", hint: "Unpaid", url: "/invoices" },
+    { label: "Paid invoices", hint: "Invoices", url: "/invoices?view=paid" },
+    ...accounts.map((a) => ({
+      label: a.email,
+      hint: "Account settings",
+      url: `/settings/${a.id}`,
+    })),
+    { label: "Connect a Gmail account", hint: "Connect", url: "/auth/google" },
+    { label: "Connect an Outlook account", hint: "Connect", url: "/auth/outlook" },
+    { label: "Log out", hint: "", url: "/logout" },
+  ];
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -138,6 +154,7 @@ function renderLayout({ title, activeAccountId, accounts, body }) {
   <div class="app">
     <aside class="sidebar">
       <a href="/" style="text-decoration:none;"><div class="wordmark">Inbox<br />Assistant</div></a>
+      <div class="cmdk-hint">Press <kbd>⌘K</kbd> to jump anywhere</div>
       <nav class="account-nav">
         <div class="nav-label">Tools</div>
         <a href="/chat" class="account-link">💬 Chat</a>
@@ -158,6 +175,95 @@ function renderLayout({ title, activeAccountId, accounts, body }) {
       ${body}
     </main>
   </div>
+
+  <div id="cmdk-overlay" class="cmdk-overlay" hidden>
+    <div class="cmdk-box">
+      <input id="cmdk-input" class="cmdk-input" type="text" placeholder="Go to..." autocomplete="off" />
+      <div id="cmdk-results" class="cmdk-results"></div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var destinations = ${JSON.stringify(paletteDestinations)};
+      var overlay = document.getElementById("cmdk-overlay");
+      var input = document.getElementById("cmdk-input");
+      var resultsEl = document.getElementById("cmdk-results");
+      var filtered = destinations;
+      var selected = 0;
+
+      function render() {
+        resultsEl.innerHTML = "";
+        filtered.forEach(function (d, i) {
+          var row = document.createElement("div");
+          row.className = "cmdk-result" + (i === selected ? " selected" : "");
+          row.innerHTML =
+            '<span class="cmdk-result-label">' + d.label + "</span>" +
+            (d.hint ? '<span class="cmdk-result-hint">' + d.hint + "</span>" : "");
+          row.addEventListener("mousedown", function (e) {
+            e.preventDefault();
+            window.location.href = d.url;
+          });
+          resultsEl.appendChild(row);
+        });
+      }
+
+      function openPalette() {
+        overlay.hidden = false;
+        input.value = "";
+        filtered = destinations;
+        selected = 0;
+        render();
+        setTimeout(function () { input.focus(); }, 0);
+      }
+
+      function closePalette() {
+        overlay.hidden = true;
+      }
+
+      input.addEventListener("input", function () {
+        var q = input.value.trim().toLowerCase();
+        filtered = !q
+          ? destinations
+          : destinations.filter(function (d) {
+              return d.label.toLowerCase().indexOf(q) !== -1;
+            });
+        selected = 0;
+        render();
+      });
+
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          selected = Math.min(selected + 1, filtered.length - 1);
+          render();
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          selected = Math.max(selected - 1, 0);
+          render();
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          if (filtered[selected]) window.location.href = filtered[selected].url;
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          closePalette();
+        }
+      });
+
+      overlay.addEventListener("mousedown", function (e) {
+        if (e.target === overlay) closePalette();
+      });
+
+      document.addEventListener("keydown", function (e) {
+        var isK = e.key === "k" || e.key === "K";
+        if (isK && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          if (overlay.hidden) openPalette();
+          else closePalette();
+        }
+      });
+    })();
+  </script>
 </body>
 </html>`;
 }
