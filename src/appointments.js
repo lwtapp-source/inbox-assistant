@@ -1,5 +1,4 @@
 import { pool } from "./db.js";
-import { detectAppointment } from "./ai.js";
 import { zonedTimeToUtc } from "./scheduling.js";
 import * as gmailProvider from "./providers/gmail.js";
 import * as outlookProvider from "./providers/outlook.js";
@@ -9,23 +8,14 @@ const providers = {
   outlook: outlookProvider,
 };
 
-function todayInZone(timeZone) {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  const parts = Object.fromEntries(dtf.formatToParts(new Date()).map((p) => [p.type, p.value]));
-  return `${parts.year}-${parts.month}-${parts.day}`;
-}
-
-// Looks at one email; if it's a confidently-detected appointment, creates a real calendar
-// event and records it. No-op (returns null) for anything else, low-confidence
-// extractions, or an email already checked. Never throws — failures are logged and
-// treated as "nothing detected" so they don't interrupt the rest of the poll.
-export async function checkForAppointment(account, detail, messageId) {
+// Creates a real calendar event from appointment details already extracted during
+// classification (see ai.js classifyEmail, which checks for this in the same call as
+// triage — no separate detection round-trip needed). Only acts on high-confidence
+// extractions, and only once per email. Never throws — failures are logged and treated
+// as "nothing created" so they don't interrupt the rest of the poll.
+export async function createAppointmentEvent(account, detail, messageId, extracted) {
   if (!account.auto_calendar_events) return null;
+  if (!extracted || extracted.confidence !== "high" || !extracted.date) return null;
 
   const provider = providers[account.provider];
   if (!provider?.createCalendarEvent) return null;
@@ -37,25 +27,6 @@ export async function checkForAppointment(account, detail, messageId) {
   if (already.rowCount > 0) return null;
 
   const timezone = account.timezone || "America/New_York";
-
-  let extracted;
-  try {
-    extracted = await detectAppointment({
-      subject: detail.subject,
-      from: detail.from,
-      snippet: detail.snippet,
-      body: detail.body,
-      referenceDate: todayInZone(timezone),
-      timezone,
-    });
-  } catch (err) {
-    console.error(`Appointment detection failed for ${account.email}:`, err.message);
-    return null;
-  }
-
-  if (!extracted?.isAppointment || extracted.confidence !== "high" || !extracted.date) {
-    return null;
-  }
 
   const dateParts = extracted.date.split("-").map(Number);
   if (dateParts.length !== 3 || dateParts.some(Number.isNaN)) return null;

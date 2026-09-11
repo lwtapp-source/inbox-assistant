@@ -37,7 +37,7 @@ export async function bulkSortRecent(account, limit = 300) {
       if (already.rowCount > 0) continue;
 
       const detail = await provider.getMessageDetail(account, id);
-      const label = await classifyEmail({
+      const { label } = await classifyEmail({
         subject: detail.subject,
         from: detail.from,
         snippet: detail.snippet,

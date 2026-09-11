@@ -1,17 +1,28 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-sonnet-4-6"; // generation/extraction tasks — drafting, structured extraction, search answers
+const FAST_MODEL = "claude-haiku-4-5-20251001"; // narrow classification/detection tasks — cheaper, plenty for these
 
 // Triage into Fyxer's real granularity: urgent (To Respond), fyi, marketing, or notifications.
-export async function classifyEmail({ subject, from, snippet, customInstructions }) {
+// Classifies an email AND checks whether it confirms a specific appointment/booking, in
+// one call — cheaper and faster than two separate round-trips, and correct is correct at
+// this task's complexity level on the fast model, so there's no quality tradeoff either.
+export async function classifyEmail({
+  subject,
+  from,
+  snippet,
+  customInstructions,
+  referenceDate,
+  timezone,
+}) {
   const instructionsBlock = customInstructions?.trim()
     ? `\nThe inbox owner has given these additional rules for how to classify mail — follow them:\n${customInstructions.trim()}\n`
     : "";
 
   const msg = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 20,
+    model: FAST_MODEL,
+    max_tokens: 250,
     messages: [
       {
         role: "user",
@@ -24,7 +35,16 @@ export async function classifyEmail({ subject, from, snippet, customInstructions
   not something a human wrote to you, not an unpaid bill
 - invoices: a bill or invoice from a vendor/supplier requesting payment — something owed
   and not yet paid. A receipt confirming a completed payment is "notifications", not this.
-Reply with only the label, nothing else.
+
+Also check: does this email confirm a specific real-world appointment, reservation, or
+booking with an exact date (e.g. a doctor's appointment, a haircut, a restaurant
+reservation, a delivery window, a car service)? This is NOT about work meetings being
+arranged by email back-and-forth, and NOT a marketing email that just mentions booking in
+passing — only a genuine confirmation of a specific booking that already has a fixed date.
+Today's date is ${referenceDate ?? new Date().toISOString().slice(0, 10)} (timezone: ${timezone ?? "UTC"}).
+
+Reply with JSON only, no commentary, no markdown fences:
+{"label": "urgent" | "fyi" | "marketing" | "notifications" | "invoices", "appointment": null or {"confidence": "high" | "medium" | "low", "title": "<short event title>", "date": "<YYYY-MM-DD>", "startTime": "<HH:MM 24h, or empty>", "endTime": "<HH:MM 24h, or empty>", "location": "<location, or empty>"}}
 ${instructionsBlock}
 From: ${from}
 Subject: ${subject}
@@ -32,8 +52,20 @@ Preview: ${snippet}`,
       },
     ],
   });
-  const label = msg.content[0]?.text?.trim().toLowerCase();
-  return ["urgent", "fyi", "marketing", "notifications", "invoices"].includes(label) ? label : "fyi";
+
+  const text = msg.content[0]?.text ?? "{}";
+  let parsed;
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+  } catch {
+    parsed = { label: "fyi", appointment: null };
+  }
+
+  const label = ["urgent", "fyi", "marketing", "notifications", "invoices"].includes(parsed.label)
+    ? parsed.label
+    : "fyi";
+  return { label, appointment: parsed.appointment ?? null };
 }
 
 // Summarizes someone's writing style from a batch of their own sent emails.
@@ -121,7 +153,7 @@ Write only the reply body text, no subject line, no commentary.`,
 // Classifies a Chat message as either a search/question or a request to draft a new email.
 export async function classifyChatIntent(message) {
   const msg = await anthropic.messages.create({
-    model: MODEL,
+    model: FAST_MODEL,
     max_tokens: 10,
     messages: [
       {
@@ -276,7 +308,7 @@ notes, unchanged.`,
 // Cheap check: does this email need someone to propose or confirm a meeting time?
 export async function needsScheduling(subject, snippet) {
   const msg = await anthropic.messages.create({
-    model: MODEL,
+    model: FAST_MODEL,
     max_tokens: 10,
     messages: [
       {
@@ -290,48 +322,6 @@ Preview: ${snippet}`,
     ],
   });
   return msg.content[0]?.text?.trim().toLowerCase().startsWith("y");
-}
-
-// ---------- Appointment auto-detection ----------
-
-// Checks whether an email confirms a specific, real-world appointment/booking (doctor's
-// visit, reservation, delivery window) as opposed to a work meeting being arranged by
-// back-and-forth email, or a marketing "book now" CTA. Returns structured details only
-// when confident.
-export async function detectAppointment({ subject, from, snippet, body, referenceDate, timezone }) {
-  const msg = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 300,
-    messages: [
-      {
-        role: "user",
-        content: `Does this email confirm a specific real-world appointment, reservation, or
-booking with an exact date (e.g. a doctor's appointment, a haircut, a restaurant
-reservation, a delivery window, a car service)? This is NOT about work meetings being
-arranged by email back-and-forth, and NOT a marketing email that just mentions booking or
-appointments in passing — only a genuine confirmation of a specific booking that already
-has a fixed date.
-
-Today's date is ${referenceDate} (timezone: ${timezone}).
-
-Reply with JSON only, no commentary, no markdown fences:
-{"isAppointment": true or false, "confidence": "high" or "medium" or "low", "title": "<short event title>", "date": "<YYYY-MM-DD>", "startTime": "<HH:MM in 24h format, or empty string if no specific time is given>", "endTime": "<HH:MM in 24h format, or empty string>", "location": "<location, or empty string>"}
-
-From: ${from}
-Subject: ${subject}
-Preview: ${snippet}
-Body:
-${body}`,
-      },
-    ],
-  });
-  const text = msg.content[0]?.text ?? "{}";
-  try {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    return JSON.parse(jsonMatch ? jsonMatch[0] : text);
-  } catch {
-    return { isAppointment: false };
-  }
 }
 
 // ---------- Invoice detail extraction ----------
@@ -379,7 +369,7 @@ ${body}`,
 // running the full 5-way classifyEmail on every old message.
 export async function isInvoiceEmail(subject, snippet) {
   const msg = await anthropic.messages.create({
-    model: MODEL,
+    model: FAST_MODEL,
     max_tokens: 10,
     messages: [
       {

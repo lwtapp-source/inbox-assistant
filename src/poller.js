@@ -3,7 +3,7 @@ import { classifyEmail, draftReply, buildVoiceProfile, needsScheduling, extractI
 import { getPdfAttachmentText } from "./pdfAttachments.js";
 import { getCustomFilesContext } from "./customFiles.js";
 import { getAvailability, formatAvailabilityWindows } from "./scheduling.js";
-import { checkForAppointment } from "./appointments.js";
+import { createAppointmentEvent } from "./appointments.js";
 import { indexMessage } from "./semanticSearch.js";
 import * as gmailProvider from "./providers/gmail.js";
 import * as outlookProvider from "./providers/outlook.js";
@@ -38,6 +38,17 @@ async function getOrRefreshVoiceProfile(account, provider) {
   );
 
   return profile;
+}
+
+function todayInZone(timeZone) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = Object.fromEntries(dtf.formatToParts(new Date()).map((p) => [p.type, p.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function shouldMove(account, label) {
@@ -79,12 +90,16 @@ export async function pollAccount(account) {
 
     const detail = await provider.getMessageDetail(account, id);
 
-    const label = await classifyEmail({
+    const timezone = account.timezone || "America/New_York";
+    const classifyResult = await classifyEmail({
       subject: detail.subject,
       from: detail.from,
       snippet: detail.snippet,
       customInstructions: account.custom_instructions,
+      referenceDate: todayInZone(timezone),
+      timezone,
     });
+    const label = classifyResult.label;
 
     await provider.applyLabel(account, id, label);
 
@@ -94,8 +109,8 @@ export async function pollAccount(account) {
 
     await indexMessage(account, detail, id);
 
-    if (label !== "marketing") {
-      await checkForAppointment(account, detail, id);
+    if (label !== "marketing" && classifyResult.appointment) {
+      await createAppointmentEvent(account, detail, id, classifyResult.appointment);
     }
 
     if (label === "invoices") {
