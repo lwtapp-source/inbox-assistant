@@ -120,13 +120,27 @@ app.use((req, res, next) => {
 
 // ---------- Shared page shell ----------
 
+// Email content (subject, snippet, from address, body, anything a sender controls) must
+// never be interpolated into HTML raw — a crafted email can otherwise break page layout
+// or inject a script that runs in an authenticated session. Every place that renders
+// sender-controlled text uses this.
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function renderLayout({ title, activeAccountId, accounts, body }) {
   const navLinks = accounts.length
     ? accounts
         .map(
           (a) => `
         <a href="/settings/${a.id}" class="account-link ${a.id === activeAccountId ? "active" : ""}">
-          <span class="account-dot ${a.provider}"></span>${a.email}
+          <span class="account-dot ${a.provider}"></span>${escapeHtml(a.email)}
         </a>`
         )
         .join("")
@@ -333,11 +347,11 @@ app.get("/", async (req, res) => {
         <div class="priority-row">
           <div class="priority-main">
             <div class="priority-top">
-              <span class="priority-subject">${p.subject || "(no subject)"}</span>
+              <span class="priority-subject">${escapeHtml(p.subject) || "(no subject)"}</span>
               ${p.pinned ? `<span class="pin-badge">Pinned</span>` : ""}
             </div>
-            <div class="priority-meta">${p.from_address} · ${p.account_email}</div>
-            ${p.snippet ? `<div class="priority-snippet">${p.snippet}</div>` : ""}
+            <div class="priority-meta">${escapeHtml(p.from_address)} · ${escapeHtml(p.account_email)}</div>
+            ${p.snippet ? `<div class="priority-snippet">${escapeHtml(p.snippet)}</div>` : ""}
           </div>
           <div class="priority-actions">
             ${
@@ -383,7 +397,7 @@ app.get("/", async (req, res) => {
         <div class="account-row">
           <div class="account-row-main">
             <span class="account-dot ${a.provider}"></span>
-            <span class="account-email">${a.email}</span>
+            <span class="account-email">${escapeHtml(a.email)}</span>
             <span class="provider-badge">${a.provider}</span>
           </div>
           <a href="/settings/${a.id}">Edit triage rules →</a>
@@ -411,7 +425,7 @@ app.get("/", async (req, res) => {
             <div class="account-row">
               <div class="account-row-main">
                 <span class="account-dot ${a.provider}"></span>
-                <span class="account-email">${a.email}</span>
+                <span class="account-email">${escapeHtml(a.email)}</span>
                 <span class="provider-badge">${a.provider}</span>
               </div>
               <div style="display:flex; gap:16px;">
@@ -445,7 +459,7 @@ app.get("/", async (req, res) => {
                  <input type="checkbox" name="accounts" value="${a.id}" ${
                    selectedAccountIds.includes(a.id) ? "checked" : ""
                  } onchange="document.getElementById('account-filter-form').submit()" />
-                 <span class="account-dot ${a.provider}"></span>${a.email}
+                 <span class="account-dot ${a.provider}"></span>${escapeHtml(a.email)}
                </label>`
                )
                .join("")}
@@ -663,14 +677,14 @@ app.get("/invoices", async (req, res) => {
         <div class="priority-row">
           <div class="priority-main">
             <div class="priority-top">
-              <span class="priority-subject">${inv.vendor || inv.subject || "(unknown vendor)"}</span>
+              <span class="priority-subject">${escapeHtml(inv.vendor) || escapeHtml(inv.subject) || "(unknown vendor)"}</span>
               ${inv.amount !== null ? `<span class="pin-badge" style="background:var(--accent-wash); color:var(--accent-dark);">${fmtAmount(inv.amount, inv.currency)}</span>` : ""}
               ${!showPaid && isOverdue(inv.due_date) ? `<span class="pin-badge">Overdue</span>` : ""}
             </div>
             <div class="priority-meta">
-              ${inv.account_email}${inv.due_date ? ` · Due ${new Date(inv.due_date).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" })}` : " · No due date found"}${inv.invoice_number ? ` · #${inv.invoice_number}` : ""}
+              ${escapeHtml(inv.account_email)}${inv.due_date ? ` · Due ${new Date(inv.due_date).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" })}` : " · No due date found"}${inv.invoice_number ? ` · #${escapeHtml(inv.invoice_number)}` : ""}
             </div>
-            ${inv.subject && inv.subject !== inv.vendor ? `<div class="priority-snippet">${inv.subject}</div>` : ""}
+            ${inv.subject && inv.subject !== inv.vendor ? `<div class="priority-snippet">${escapeHtml(inv.subject)}</div>` : ""}
           </div>
           <div class="priority-actions">
             ${inv.web_link ? `<a href="${inv.web_link}">Open</a>` : ""}
@@ -708,7 +722,7 @@ app.get("/invoices", async (req, res) => {
         ? `<form method="POST" action="/invoices/scan" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:20px;">
              <select name="account_id" required style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
                <option value="">Scan which account?</option>
-               ${accounts.map((a) => `<option value="${a.id}">${a.email}</option>`).join("")}
+               ${accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.email)}</option>`).join("")}
              </select>
              <select name="limit" style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
                <option value="100">Last 100 messages</option>
@@ -874,7 +888,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
   const accountOptions = accounts
     .map(
       (a) =>
-        `<option value="${a.id}" ${String(a.id) === String(selectedAccountId) ? "selected" : ""}>${a.email}</option>`
+        `<option value="${a.id}" ${String(a.id) === String(selectedAccountId) ? "selected" : ""}>${escapeHtml(a.email)}</option>`
     )
     .join("");
 
@@ -887,8 +901,8 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
         (s, i) => `
         <div class="file-row">
           <div>
-            <div class="file-name">[${i + 1}] ${s.subject || "(no subject)"}</div>
-            <div class="file-meta">${s.from} · ${s.date}</div>
+            <div class="file-name">[${i + 1}] ${escapeHtml(s.subject) || "(no subject)"}</div>
+            <div class="file-meta">${escapeHtml(s.from)} · ${escapeHtml(s.date)}</div>
           </div>
           ${s.webLink ? `<a href="${s.webLink}" target="_blank" rel="noopener">Open</a>` : ""}
         </div>`
@@ -897,7 +911,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
     resultHtml = `
       <div class="section">
         <h2>Answer</h2>
-        <p style="white-space:pre-wrap;">${result.answer}</p>
+        <p style="white-space:pre-wrap;">${escapeHtml(result.answer)}</p>
         ${result.sources.length ? `<h2 style="margin-top:18px;">Sources</h2><div class="file-list">${sourceRows}</div>` : ""}
       </div>`;
   } else if (result?.type === "draft_needs_clarification") {
@@ -906,7 +920,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
         <h2>Need a bit more detail</h2>
         <p class="section-help">
           I couldn't find a clear, unambiguous email address for
-          ${result.recipientName ? `"${result.recipientName}"` : "the recipient"}.
+          ${result.recipientName ? `"${escapeHtml(result.recipientName)}"` : "the recipient"}.
           Try again with their full email address included, e.g. "Draft an email to
           thomas@example.com about the property viewing on Monday."
         </p>
@@ -915,8 +929,8 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
     resultHtml = `
       <div class="section">
         <h2>Draft created</h2>
-        <p class="section-help">To: ${result.to} · Subject: ${result.subject}</p>
-        <p style="white-space:pre-wrap; border:1px solid var(--border); border-radius:var(--radius); padding:14px; background:var(--surface);">${result.body}</p>
+        <p class="section-help">To: ${escapeHtml(result.to)} · Subject: ${escapeHtml(result.subject)}</p>
+        <p style="white-space:pre-wrap; border:1px solid var(--border); border-radius:var(--radius); padding:14px; background:var(--surface);">${escapeHtml(result.body)}</p>
         ${result.webLink ? `<p><a href="${result.webLink}" target="_blank" rel="noopener">Open Drafts →</a></p>` : ""}
       </div>`;
   }
@@ -941,7 +955,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
           Examples: "Find the email thread about the marketing proposal" or "Draft an email
           to sarah@example.com about rescheduling Thursday's appointment."
         </p>
-        <textarea name="message" rows="4">${message ?? ""}</textarea>
+        <textarea name="message" rows="4">${escapeHtml(message) ?? ""}</textarea>
       </div>
       <button type="submit">Ask</button>
     </form>
@@ -1149,7 +1163,7 @@ app.get("/settings/:id", async (req, res) => {
           (f) => `
         <div class="file-row">
           <div>
-            <div class="file-name">${f.filename}</div>
+            <div class="file-name">${escapeHtml(f.filename)}</div>
             <div class="file-meta">${f.content_length.toLocaleString()} characters · uploaded ${new Date(
               f.uploaded_at
             ).toLocaleDateString()}</div>
@@ -1180,7 +1194,7 @@ app.get("/settings/:id", async (req, res) => {
           Example: "Emails from clients or referring vets are always urgent. Newsletters and
           marketing are always marketing. Anything mentioning an invoice is fyi."
         </p>
-        <textarea name="custom_instructions" rows="6">${account.custom_instructions ?? ""}</textarea>
+        <textarea name="custom_instructions" rows="6">${escapeHtml(account.custom_instructions)}</textarea>
       </div>
 
       <div class="section">
@@ -1190,7 +1204,7 @@ app.get("/settings/:id", async (req, res) => {
           drafting prompt alongside the auto-learned voice profile. Example: "I'm concise and
           direct. I'm a practice manager at Sandhills Animal Hospital. I sign off with 'Thanks, Sandy'."
         </p>
-        <textarea name="tone_instructions" rows="5">${account.tone_instructions ?? ""}</textarea>
+        <textarea name="tone_instructions" rows="5">${escapeHtml(account.tone_instructions)}</textarea>
       </div>
 
       <div class="section">
@@ -1200,7 +1214,7 @@ app.get("/settings/:id", async (req, res) => {
           <code>@keysupplier.com</code>. Mail from these senders always gets a draft, even if
           it would otherwise be classified as fyi, marketing, or notifications.
         </p>
-        <textarea name="always_draft_senders" rows="4">${account.always_draft_senders ?? ""}</textarea>
+        <textarea name="always_draft_senders" rows="4">${escapeHtml(account.always_draft_senders)}</textarea>
       </div>
 
       <div class="section">
@@ -1210,7 +1224,7 @@ app.get("/settings/:id", async (req, res) => {
           API don't automatically pick up the signature configured in Gmail or Outlook, so
           set it here if you want one included.
         </p>
-        <textarea name="signature" rows="4">${account.signature ?? ""}</textarea>
+        <textarea name="signature" rows="4">${escapeHtml(account.signature)}</textarea>
       </div>
 
       <div class="section">
@@ -1295,7 +1309,7 @@ app.get("/settings/:id", async (req, res) => {
       </p>
       ${
         account.learned_style_notes?.trim()
-          ? `<p style="white-space:pre-wrap; border:1px solid var(--border); border-radius:var(--radius); padding:14px; background:var(--surface);">${account.learned_style_notes}</p>
+          ? `<p style="white-space:pre-wrap; border:1px solid var(--border); border-radius:var(--radius); padding:14px; background:var(--surface);">${escapeHtml(account.learned_style_notes)}</p>
              <form method="POST" action="/settings/${account.id}/learned-notes/clear" style="margin-top:10px;">
                <button type="submit" class="link-button danger">Clear learned notes</button>
              </form>`
@@ -1317,12 +1331,12 @@ app.get("/settings/:id", async (req, res) => {
                   (e) => `
               <div class="file-row">
                 <div>
-                  <div class="file-name">${e.title}</div>
+                  <div class="file-name">${escapeHtml(e.title)}</div>
                   <div class="file-meta">${new Date(e.start_time).toLocaleString("en-US", {
                     timeZone: account.timezone || "America/New_York",
                     dateStyle: "medium",
                     timeStyle: "short",
-                  })}${e.location ? " · " + e.location : ""}</div>
+                  })}${e.location ? " · " + escapeHtml(e.location) : ""}</div>
                 </div>
                 <form method="POST" action="/settings/${account.id}/events/${e.id}/delete">
                   <button type="submit" class="link-button danger">Delete</button>
