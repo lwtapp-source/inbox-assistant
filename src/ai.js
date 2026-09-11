@@ -8,25 +8,14 @@ const FAST_MODEL = "claude-haiku-4-5-20251001"; // narrow classification/detecti
 // Classifies an email AND checks whether it confirms a specific appointment/booking, in
 // one call — cheaper and faster than two separate round-trips, and correct is correct at
 // this task's complexity level on the fast model, so there's no quality tradeoff either.
-export async function classifyEmail({
-  subject,
-  from,
-  snippet,
-  customInstructions,
-  referenceDate,
-  timezone,
-}) {
+// Builds the classification prompt text — exported so the batch-based bulk sort can
+// submit the exact same prompt without going through a live API call.
+export function buildClassifyPrompt({ subject, from, snippet, customInstructions, referenceDate, timezone }) {
   const instructionsBlock = customInstructions?.trim()
     ? `\nThe inbox owner has given these additional rules for how to classify mail — follow them:\n${customInstructions.trim()}\n`
     : "";
 
-  const msg = await anthropic.messages.create({
-    model: FAST_MODEL,
-    max_tokens: 250,
-    messages: [
-      {
-        role: "user",
-        content: `Classify this email into exactly one label: urgent, fyi, marketing, notifications, or invoices.
+  return `Classify this email into exactly one label: urgent, fyi, marketing, notifications, or invoices.
 - urgent: needs a human reply
 - fyi: informational, no reply needed, but not marketing or an automated notification
 - marketing: promotional content, newsletters, sales/marketing emails
@@ -48,12 +37,12 @@ Reply with JSON only, no commentary, no markdown fences:
 ${instructionsBlock}
 From: ${from}
 Subject: ${subject}
-Preview: ${snippet}`,
-      },
-    ],
-  });
+Preview: ${snippet}`;
+}
 
-  const text = msg.content[0]?.text ?? "{}";
+// Parses a classification response's text into {label, appointment} — shared by the
+// live call below and by the batch result handler.
+export function parseClassifyResult(text) {
   let parsed;
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -61,11 +50,35 @@ Preview: ${snippet}`,
   } catch {
     parsed = { label: "fyi", appointment: null };
   }
-
   const label = ["urgent", "fyi", "marketing", "notifications", "invoices"].includes(parsed.label)
     ? parsed.label
     : "fyi";
   return { label, appointment: parsed.appointment ?? null };
+}
+
+// Classifies an email AND checks whether it confirms a specific appointment/booking, in
+// one call — cheaper and faster than two separate round-trips, and correct is correct at
+// this task's complexity level on the fast model, so there's no quality tradeoff either.
+export async function classifyEmail({
+  subject,
+  from,
+  snippet,
+  customInstructions,
+  referenceDate,
+  timezone,
+}) {
+  const msg = await anthropic.messages.create({
+    model: FAST_MODEL,
+    max_tokens: 250,
+    messages: [
+      {
+        role: "user",
+        content: buildClassifyPrompt({ subject, from, snippet, customInstructions, referenceDate, timezone }),
+      },
+    ],
+  });
+
+  return parseClassifyResult(msg.content[0]?.text ?? "{}");
 }
 
 // Summarizes someone's writing style from a batch of their own sent emails.

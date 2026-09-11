@@ -151,6 +151,17 @@ export async function initSchema() {
       created_at TIMESTAMPTZ DEFAULT now(),
       UNIQUE(account_id, message_id)
     );
+
+    CREATE TABLE IF NOT EXISTS batch_jobs (
+      id SERIAL PRIMARY KEY,
+      account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+      batch_id TEXT NOT NULL UNIQUE,     -- Anthropic's Message Batch id
+      job_type TEXT NOT NULL,            -- 'invoice_scan' | 'bulk_sort'
+      request_map JSONB NOT NULL,        -- custom_id -> {messageId, subject, from, snippet, webLink}
+      status TEXT NOT NULL DEFAULT 'submitted', -- submitted -> completed / failed
+      created_at TIMESTAMPTZ DEFAULT now(),
+      completed_at TIMESTAMPTZ
+    );
   `);
 
   // Isolated from the main schema block above: if the vector extension didn't install

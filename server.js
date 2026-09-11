@@ -12,7 +12,9 @@ import { pollAllAccounts } from "./src/poller.js";
 import { bulkSortRecent } from "./src/bulkSort.js";
 import { checkAllFollowUps } from "./src/followUp.js";
 import { checkAllDraftEdits } from "./src/learning.js";
-import { scanForInvoices } from "./src/invoiceScan.js";
+import { scanForInvoices, applyInvoiceScanResults } from "./src/invoiceScan.js";
+import { applyBulkSortResults } from "./src/bulkSort.js";
+import { checkPendingBatches } from "./src/anthropicBatch.js";
 import { searchSimilar } from "./src/semanticSearch.js";
 import { scanForSearchIndex } from "./src/searchIndexScan.js";
 import { listCustomFiles, getCustomFilesContext } from "./src/customFiles.js";
@@ -691,7 +693,7 @@ app.get("/invoices", async (req, res) => {
       ${showPaid ? `<a href="/invoices" style="margin-left:8px;">← Back to unpaid</a>` : `<a href="/invoices?view=paid" style="margin-left:8px;">View paid →</a>`}
     </p>
 
-    ${req.query.scanning ? `<div class="saved-banner">Scanning recent mail for invoices in the background — check back in a few minutes.</div><br/>` : ""}
+    ${req.query.scanning ? `<div class="saved-banner">Invoice scan submitted as a background batch job — results appear here once Anthropic finishes processing (usually well under an hour, occasionally longer).</div><br/>` : ""}
 
     ${
       accounts.length
@@ -971,7 +973,7 @@ app.get("/auth/google/callback", async (req, res) => {
   try {
     const account = await handleGoogleCallback(req.query.code);
     res.send(
-      `Connected ${account.email}. Sorting your recent inbox now — this runs in the background, check back in a few minutes. You can close this tab.`
+      `Connected ${account.email}. Sorting your recent inbox now as a background batch job — results appear over the next while (usually well under an hour). You can close this tab.`
     );
     bulkSortRecent(account).catch((err) =>
       console.error(`Bulk sort failed for ${account.email}:`, err)
@@ -990,7 +992,7 @@ app.get("/auth/outlook/callback", async (req, res) => {
   try {
     const account = await handleOutlookCallback(req.query.code);
     res.send(
-      `Connected ${account.email}. Sorting your recent inbox now — this runs in the background, check back in a few minutes. You can close this tab.`
+      `Connected ${account.email}. Sorting your recent inbox now as a background batch job — results appear over the next while (usually well under an hour). You can close this tab.`
     );
     bulkSortRecent(account).catch((err) =>
       console.error(`Bulk sort failed for ${account.email}:`, err)
@@ -1010,7 +1012,8 @@ app.get("/poll", async (req, res) => {
   const pollResults = await pollAllAccounts();
   const followUpResults = await checkAllFollowUps();
   const learningResults = await checkAllDraftEdits();
-  res.json({ poll: pollResults, followUps: followUpResults, learning: learningResults });
+  const batchResults = await processPendingBatches();
+  res.json({ poll: pollResults, followUps: followUpResults, learning: learningResults, batches: batchResults });
 });
 
 app.get("/health", (_req, res) => res.send("ok"));
@@ -1444,6 +1447,29 @@ app.post("/settings/:id", async (req, res) => {
   res.redirect(`/settings/${req.params.id}?saved=1`);
 });
 
+// ---------- Batch job processing ----------
+// Picks up any Anthropic Message Batches (bulk sort on connect, invoice history scans)
+// that have finished since we last checked, and applies their results. Cheap to call
+// often — it's a no-op when nothing's pending or nothing's finished yet.
+async function processPendingBatches() {
+  const completedJobs = await checkPendingBatches();
+  const results = [];
+  for (const { job, results: batchResults } of completedJobs) {
+    try {
+      if (job.job_type === "invoice_scan") {
+        const found = await applyInvoiceScanResults(job, batchResults);
+        results.push({ batchId: job.batch_id, jobType: job.job_type, found });
+      } else if (job.job_type === "bulk_sort") {
+        const sorted = await applyBulkSortResults(job, batchResults);
+        results.push({ batchId: job.batch_id, jobType: job.job_type, sorted });
+      }
+    } catch (err) {
+      console.error(`Failed to apply batch job ${job.batch_id} (${job.job_type}):`, err.message);
+    }
+  }
+  return results;
+}
+
 async function start() {
   await initSchema();
 
@@ -1462,6 +1488,10 @@ async function start() {
     console.log("Checking draft edits (passive learning)...");
     const learningResults = await checkAllDraftEdits();
     console.log(learningResults);
+
+    console.log("Checking pending batch jobs...");
+    const batchResults = await processPendingBatches();
+    console.log(batchResults);
   }, intervalMs);
 }
 
