@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import multer from "multer";
 import pdfParse from "pdf-parse";
 import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
 import { initSchema, pool } from "./src/db.js";
 import { getAuthUrl as getGoogleAuthUrl, handleOAuthCallback as handleGoogleCallback } from "./src/auth/google.js";
 import { getAuthUrl as getOutlookAuthUrl, handleOAuthCallback as handleOutlookCallback } from "./src/auth/outlook.js";
@@ -38,8 +39,15 @@ app.set("trust proxy", 1); // Render terminates TLS at the proxy; needed for sec
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
+const PgSession = connectPgSimple(session);
+
 app.use(
   session({
+    store: new PgSession({
+      pool,
+      tableName: "user_sessions",
+      createTableIfMissing: true,
+    }),
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
