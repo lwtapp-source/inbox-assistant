@@ -8,11 +8,12 @@ const providers = {
   outlook: outlookProvider,
 };
 
-// Keeps each Voyage call to a modest size and leaves a gap between calls — gentle
-// enough to work even on Voyage's free tier (3 requests/minute without a payment
-// method on file), and still much faster than one call per email.
-const BATCH_SIZE = 10;
-const DELAY_BETWEEN_BATCHES_MS = 20 * 1000;
+// Keeps each Voyage call small and leaves real margin between calls — gentle enough to
+// work even on Voyage's free tier (3 requests/minute AND 10K tokens/minute without a
+// payment method on file — batches of emails can hit the token cap even under the
+// request-count cap), and still much faster than one call per email.
+const BATCH_SIZE = 4;
+const DELAY_BETWEEN_BATCHES_MS = 25 * 1000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -54,7 +55,14 @@ export async function scanForSearchIndex(account, limit = 300) {
     }
 
     if (items.length) {
-      indexed += await indexMessagesBatch(account, items);
+      let batchStored = await indexMessagesBatch(account, items);
+      if (batchStored === 0) {
+        // Likely a rate limit — wait longer and try this batch once more before
+        // moving on, rather than silently losing it.
+        await sleep(45 * 1000);
+        batchStored = await indexMessagesBatch(account, items);
+      }
+      indexed += batchStored;
     }
 
     if (i + BATCH_SIZE < toIndex.length) {

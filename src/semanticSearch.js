@@ -3,7 +3,7 @@ import { embedText, embedTexts, toVectorLiteral } from "./voyage.js";
 
 // Caps how much of an email we embed — keeps requests small and cheap; a summary-length
 // chunk captures the meaning of an email far better than raw length would suggest.
-const MAX_INDEX_CHARS = 4000;
+const MAX_INDEX_CHARS = 2000;
 
 function buildIndexText(detail) {
   return [detail.subject, detail.from, detail.snippet, detail.body]
