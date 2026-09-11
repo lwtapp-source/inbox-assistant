@@ -174,7 +174,8 @@ export async function initSchema() {
       USING processed_messages b
       WHERE a.account_id = b.account_id
         AND a.subject = b.subject
-        AND a.from_address = b.from_address
+        AND a.subject IS NOT NULL
+        AND a.subject != ''
         AND a.id < b.id;
     `);
   } catch (err) {
