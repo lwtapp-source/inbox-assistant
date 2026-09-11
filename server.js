@@ -1018,6 +1018,66 @@ app.get("/poll", async (req, res) => {
 
 app.get("/health", (_req, res) => res.send("ok"));
 
+// ---------- Data export/import ----------
+// Used for the Postgres provider migration, and useful as a general backup/restore going
+// forward. Protected by the existing session login like everything else in the app.
+// Deliberately excludes email_embeddings (regenerable via re-scan, and large) and
+// batch_jobs (transient, tied to in-flight Anthropic batches).
+
+const EXPORT_TABLES = [
+  "accounts",
+  "processed_messages",
+  "invoices",
+  "detected_events",
+  "custom_files",
+  "follow_ups",
+];
+
+app.get("/admin/export-data", async (req, res) => {
+  const dump = {};
+  for (const table of EXPORT_TABLES) {
+    const { rows } = await pool.query(`SELECT * FROM ${table}`);
+    dump[table] = rows;
+  }
+  res.setHeader("Content-Disposition", 'attachment; filename="inbox-assistant-backup.json"');
+  res.json(dump);
+});
+
+app.post("/admin/import-data", express.json({ limit: "20mb" }), async (req, res) => {
+  const dump = req.body;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const imported = {};
+    for (const table of EXPORT_TABLES) {
+      const rows = dump[table] || [];
+      for (const row of rows) {
+        const columns = Object.keys(row);
+        const values = columns.map((c) => row[c]);
+        const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
+        const colList = columns.map((c) => `"${c}"`).join(", ");
+        await client.query(
+          `INSERT INTO ${table} (${colList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,
+          values
+        );
+      }
+      // Keeps future inserts from colliding with the restored ids.
+      await client.query(
+        `SELECT setval(pg_get_serial_sequence('${table}', 'id'), COALESCE((SELECT MAX(id) FROM ${table}), 1))`
+      );
+      imported[table] = rows.length;
+    }
+    await client.query("COMMIT");
+    res.json({ ok: true, imported });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Import failed:", err);
+    res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // ---------- Settings ----------
 
 const CATEGORIES = [
