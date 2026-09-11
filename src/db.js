@@ -175,7 +175,6 @@ export async function initSchema() {
       WHERE a.account_id = b.account_id
         AND a.subject = b.subject
         AND a.from_address = b.from_address
-        AND a.snippet = b.snippet
         AND a.id < b.id;
     `);
   } catch (err) {
