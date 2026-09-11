@@ -345,15 +345,59 @@ app.get("/", async (req, res) => {
 
     <script>
       (function () {
-        var key = "topPrioritiesScroll";
-        var saved = sessionStorage.getItem(key);
-        if (saved !== null) {
-          window.scrollTo(0, parseInt(saved, 10));
-          sessionStorage.removeItem(key);
+        var list = document.querySelector(".priority-list");
+        if (!list) return;
+
+        function emptyMessage() {
+          return ${JSON.stringify(showDone ? "No completed items yet." : "Nothing urgent waiting on you right now.")};
         }
-        document.querySelectorAll(".priority-actions form").forEach(function (form) {
-          form.addEventListener("submit", function () {
-            sessionStorage.setItem(key, String(window.scrollY));
+
+        function showEmptyStateIfNeeded() {
+          if (!list.querySelector(".priority-row")) {
+            list.innerHTML = '<div class="empty-state" style="padding:20px 0;">' + emptyMessage() + "</div>";
+          }
+        }
+
+        list.querySelectorAll(".priority-actions form").forEach(function (form) {
+          form.addEventListener("submit", async function (e) {
+            e.preventDefault();
+            var action = form.getAttribute("action");
+            var row = form.closest(".priority-row");
+            var submitBtn = form.querySelector("button[type=submit]");
+            if (submitBtn) submitBtn.disabled = true;
+
+            try {
+              var res = await fetch(action, {
+                method: "POST",
+                headers: { "X-Requested-With": "fetch" },
+              });
+              if (!res.ok) throw new Error("Request failed: " + res.status);
+
+              if (action.endsWith("/pin")) {
+                var badge = row.querySelector(".pin-badge");
+                if (badge) {
+                  badge.remove();
+                  submitBtn.textContent = "Pin";
+                } else {
+                  var top = row.querySelector(".priority-top");
+                  var newBadge = document.createElement("span");
+                  newBadge.className = "pin-badge";
+                  newBadge.textContent = "Pinned";
+                  top.appendChild(newBadge);
+                  submitBtn.textContent = "Unpin";
+                  list.prepend(row);
+                }
+                if (submitBtn) submitBtn.disabled = false;
+              } else {
+                // done / undone / delete all remove the row from this view
+                row.remove();
+                showEmptyStateIfNeeded();
+              }
+            } catch (err) {
+              console.error(err);
+              alert("Something went wrong — please try again.");
+              if (submitBtn) submitBtn.disabled = false;
+            }
           });
         });
       })();
@@ -365,13 +409,19 @@ app.get("/", async (req, res) => {
 
 // ---------- Top priorities actions ----------
 
+function isAjax(req) {
+  return req.get("X-Requested-With") === "fetch";
+}
+
 app.post("/priorities/:id/done", async (req, res) => {
   await pool.query(`UPDATE processed_messages SET done = true WHERE id = $1`, [req.params.id]);
+  if (isAjax(req)) return res.sendStatus(200);
   res.redirect("/");
 });
 
 app.post("/priorities/:id/undone", async (req, res) => {
   await pool.query(`UPDATE processed_messages SET done = false WHERE id = $1`, [req.params.id]);
+  if (isAjax(req)) return res.sendStatus(200);
   res.redirect("/");
 });
 
@@ -380,11 +430,13 @@ app.post("/priorities/:id/pin", async (req, res) => {
     `UPDATE processed_messages SET pinned = NOT pinned WHERE id = $1`,
     [req.params.id]
   );
+  if (isAjax(req)) return res.sendStatus(200);
   res.redirect("/");
 });
 
 app.post("/priorities/:id/delete", async (req, res) => {
   await pool.query(`DELETE FROM processed_messages WHERE id = $1`, [req.params.id]);
+  if (isAjax(req)) return res.sendStatus(200);
   res.redirect("/");
 });
 
