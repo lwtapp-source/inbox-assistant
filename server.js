@@ -313,6 +313,7 @@ app.get("/", async (req, res) => {
       ${showDone ? "Urgent items you've marked done." : "Every urgent email across your connected inboxes, in one list."}
       ${showDone ? `<a href="/" style="margin-left:8px;">← Back to active</a>` : `<a href="/?view=done" style="margin-left:8px;">View completed →</a>`}
     </p>
+    <p class="keyboard-hint"><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>d</kbd> ${showDone ? "undo" : "done"} · ${showDone ? "" : "<kbd>p</kbd> pin · "}<kbd>x</kbd> delete · <kbd>enter</kbd> open</p>
 
     ${
       accounts.length > 1
@@ -388,10 +389,14 @@ app.get("/", async (req, res) => {
                   list.prepend(row);
                 }
                 if (submitBtn) submitBtn.disabled = false;
+                updateSelectionVisual();
               } else {
                 // done / undone / delete all remove the row from this view
+                var wasSelected = row.classList.contains("selected");
                 row.remove();
                 showEmptyStateIfNeeded();
+                if (wasSelected) selectRow(selectedIndex);
+                else updateSelectionVisual();
               }
             } catch (err) {
               console.error(err);
@@ -399,6 +404,71 @@ app.get("/", async (req, res) => {
               if (submitBtn) submitBtn.disabled = false;
             }
           });
+        });
+
+        // ---------- keyboard navigation (j/k/d/p/x/enter) ----------
+        var selectedIndex = 0;
+
+        function getRows() {
+          return Array.from(list.querySelectorAll(".priority-row"));
+        }
+
+        function updateSelectionVisual() {
+          getRows().forEach(function (r, i) {
+            if (i === selectedIndex) r.classList.add("selected");
+            else r.classList.remove("selected");
+          });
+        }
+
+        function selectRow(index) {
+          var rows = getRows();
+          if (!rows.length) return;
+          selectedIndex = Math.max(0, Math.min(index, rows.length - 1));
+          updateSelectionVisual();
+          rows[selectedIndex].scrollIntoView({ block: "nearest" });
+        }
+
+        function currentRow() {
+          return getRows()[selectedIndex];
+        }
+
+        function clickWithin(selector) {
+          var row = currentRow();
+          if (!row) return;
+          var el = row.querySelector(selector);
+          if (el) el.click();
+        }
+
+        selectRow(0);
+
+        document.addEventListener("keydown", function (e) {
+          var tag = (e.target.tagName || "").toLowerCase();
+          if (tag === "input" || tag === "textarea" || tag === "select") return;
+          if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+          if (e.key === "j") {
+            e.preventDefault();
+            selectRow(selectedIndex + 1);
+          } else if (e.key === "k") {
+            e.preventDefault();
+            selectRow(selectedIndex - 1);
+          } else if (e.key === "d") {
+            e.preventDefault();
+            clickWithin('form[action$="/done"] button, form[action$="/undone"] button');
+          } else if (e.key === "p") {
+            e.preventDefault();
+            clickWithin('form[action$="/pin"] button');
+          } else if (e.key === "x") {
+            e.preventDefault();
+            clickWithin('form[action$="/delete"] button');
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            var row = currentRow();
+            if (row) {
+              var openLink = row.querySelector(".priority-actions a");
+              if (openLink) openLink.click();
+            }
+          }
         });
       })();
     </script>
