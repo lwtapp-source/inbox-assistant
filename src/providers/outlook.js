@@ -287,12 +287,13 @@ export async function findSentVersionInThread(account, conversationId, afterDate
   const afterIso = new Date(afterDate).toISOString();
   const params = new URLSearchParams({
     $filter: `conversationId eq '${filterValue}' and sentDateTime gt ${afterIso}`,
-    $orderby: "sentDateTime asc",
     $select: "body,sentDateTime",
   });
   const data = await graphFetch(account, `/me/mailFolders/sentitems/messages?${params}`);
-  const first = (data.value ?? [])[0];
-  return first?.body?.content ?? null;
+  const sorted = (data.value ?? []).sort(
+    (a, b) => new Date(a.sentDateTime) - new Date(b.sentDateTime)
+  );
+  return sorted[0]?.body?.content ?? null;
 }
 
 // ---------- Scheduling: calendar availability ----------
