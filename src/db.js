@@ -10,6 +10,15 @@ export const pool = new Pool({
 });
 
 export async function initSchema() {
+  try {
+    await pool.query(`CREATE EXTENSION IF NOT EXISTS vector;`);
+  } catch (err) {
+    console.error(
+      "Could not enable the pgvector extension (semantic search will be unavailable):",
+      err.message
+    );
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS accounts (
       id SERIAL PRIMARY KEY,
@@ -143,4 +152,27 @@ export async function initSchema() {
       UNIQUE(account_id, message_id)
     );
   `);
+
+  // Isolated from the main schema block above: if the vector extension didn't install
+  // (e.g. unsupported on this Postgres tier), this fails on its own without taking down
+  // every other table. Semantic search just stays unavailable in that case.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS email_embeddings (
+        id SERIAL PRIMARY KEY,
+        account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL,
+        subject TEXT,
+        snippet TEXT,
+        from_address TEXT,
+        message_date TIMESTAMPTZ,
+        web_link TEXT,
+        embedding vector(1024),
+        created_at TIMESTAMPTZ DEFAULT now(),
+        UNIQUE(account_id, message_id)
+      );
+    `);
+  } catch (err) {
+    console.error("Could not create email_embeddings table (semantic search will be unavailable):", err.message);
+  }
 }

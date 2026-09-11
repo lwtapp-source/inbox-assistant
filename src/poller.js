@@ -4,6 +4,7 @@ import { getPdfAttachmentText } from "./pdfAttachments.js";
 import { getCustomFilesContext } from "./customFiles.js";
 import { getAvailability, formatAvailabilityWindows } from "./scheduling.js";
 import { checkForAppointment } from "./appointments.js";
+import { indexMessage } from "./semanticSearch.js";
 import * as gmailProvider from "./providers/gmail.js";
 import * as outlookProvider from "./providers/outlook.js";
 
@@ -90,6 +91,8 @@ export async function pollAccount(account) {
     if (shouldMove(account, label) && provider.moveOutOfInbox) {
       await provider.moveOutOfInbox(account, id, label);
     }
+
+    await indexMessage(account, detail, id);
 
     if (label !== "marketing") {
       await checkForAppointment(account, detail, id);

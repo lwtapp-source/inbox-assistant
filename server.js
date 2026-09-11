@@ -13,6 +13,8 @@ import { bulkSortRecent } from "./src/bulkSort.js";
 import { checkAllFollowUps } from "./src/followUp.js";
 import { checkAllDraftEdits } from "./src/learning.js";
 import { scanForInvoices } from "./src/invoiceScan.js";
+import { searchSimilar } from "./src/semanticSearch.js";
+import { scanForSearchIndex } from "./src/searchIndexScan.js";
 import { listCustomFiles, getCustomFilesContext } from "./src/customFiles.js";
 import {
   classifyChatIntent,
@@ -748,8 +750,27 @@ app.post("/invoices/:id/delete", async (req, res) => {
 
 app.get("/chat", async (req, res) => {
   const accounts = await getAccounts();
-  const body = renderChatPage({ accounts, selectedAccountId: null, result: null });
+  const body = renderChatPage({
+    accounts,
+    selectedAccountId: null,
+    result: null,
+    indexing: !!req.query.indexing,
+  });
   res.send(renderLayout({ title: "Chat", activeAccountId: null, accounts, body }));
+});
+
+app.post("/chat/build-index", async (req, res) => {
+  const { rows } = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [
+    req.body.account_id,
+  ]);
+  const account = rows[0];
+  if (account) {
+    const limit = Number(req.body.limit) || 300;
+    scanForSearchIndex(account, limit).catch((err) =>
+      console.error(`Search index scan failed for ${account.email}:`, err)
+    );
+  }
+  res.redirect("/chat?indexing=1");
 });
 
 app.post("/chat", async (req, res) => {
@@ -773,9 +794,14 @@ app.post("/chat", async (req, res) => {
       const intent = await classifyChatIntent(message);
 
       if (intent === "search") {
-        const searchResults = provider.searchMessages
-          ? await provider.searchMessages(account, message, 8)
-          : [];
+        let searchResults = await searchSimilar(account.id, message, 8);
+        if (!searchResults) {
+          // No embeddings indexed yet (or semantic search isn't configured) — fall
+          // back to the provider's native keyword search.
+          searchResults = provider.searchMessages
+            ? await provider.searchMessages(account, message, 8)
+            : [];
+        }
         const answer = await answerFromSearch({ question: message, results: searchResults });
         result = { type: "search", answer, sources: searchResults };
       } else {
@@ -834,7 +860,7 @@ app.post("/chat", async (req, res) => {
   res.send(renderLayout({ title: "Chat", activeAccountId: null, accounts, body }));
 });
 
-function renderChatPage({ accounts, selectedAccountId, message, result }) {
+function renderChatPage({ accounts, selectedAccountId, message, result, indexing }) {
   const accountOptions = accounts
     .map(
       (a) =>
@@ -889,6 +915,8 @@ function renderChatPage({ accounts, selectedAccountId, message, result }) {
     <h1>Chat</h1>
     <p class="subtitle">Ask a question about an inbox, or ask for a new email to be drafted from scratch.</p>
 
+    ${indexing ? `<div class="saved-banner">Building the search index in the background — check back in a few minutes.</div><br/>` : ""}
+
     <form method="POST" action="/chat">
       <div class="section" style="padding-top:0; border-top:none;">
         <h2>Which inbox?</h2>
@@ -907,6 +935,27 @@ function renderChatPage({ accounts, selectedAccountId, message, result }) {
       </div>
       <button type="submit">Ask</button>
     </form>
+
+    <div class="section">
+      <h2>Search index</h2>
+      <p class="section-help">
+        "Find" requests above use semantic search when an inbox has been indexed —
+        understanding meaning, not just matching keywords — falling back to regular
+        keyword search otherwise. Build or extend the index here.
+      </p>
+      <form method="POST" action="/chat/build-index" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <select name="account_id" required style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
+          <option value="">Index which account?</option>
+          ${accountOptions}
+        </select>
+        <select name="limit" style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
+          <option value="100">Last 100 messages</option>
+          <option value="300" selected>Last 300 messages</option>
+          <option value="1000">Last 1000 messages</option>
+        </select>
+        <button type="submit">Build search index</button>
+      </form>
+    </div>
 
     ${resultHtml}
   `;
