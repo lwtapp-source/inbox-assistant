@@ -23,14 +23,25 @@ async function graphFetch(account, path, options = {}) {
   return res.status === 204 ? null : res.json();
 }
 
+// Only considers the most recent RECENT_WINDOW messages (read or unread) — an old,
+// large unread backlog (newsletters going back years, etc.) should never get pulled
+// through expensive live processing one at a time. A backlog like that belongs in the
+// batch-based history scan instead. Caps how many go out per cycle so a burst of
+// genuinely new mail doesn't overwhelm one poll either.
+const RECENT_WINDOW = 300;
+const MAX_PER_CYCLE = 20;
+
 export async function listUnreadMessageIds(account) {
   const params = new URLSearchParams({
-    $filter: "isRead eq false",
-    $top: "20",
-    $select: "id",
+    $top: String(RECENT_WINDOW),
+    $orderby: "receivedDateTime desc",
+    $select: "id,isRead",
   });
   const data = await graphFetch(account, `/me/mailFolders/inbox/messages?${params}`);
-  return (data.value ?? []).map((m) => m.id);
+  return (data.value ?? [])
+    .filter((m) => m.isRead === false)
+    .slice(0, MAX_PER_CYCLE)
+    .map((m) => m.id);
 }
 
 // All recent inbox mail (read or unread) — used for the one-time bulk sort on connect.
