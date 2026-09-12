@@ -168,7 +168,7 @@ export async function initSchema() {
     CREATE TABLE IF NOT EXISTS meetings (
       id SERIAL PRIMARY KEY,
       account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
-      bot_id TEXT NOT NULL UNIQUE,       -- Recall.ai's bot id
+      bot_id TEXT UNIQUE,                -- Recall.ai's bot id (virtual meetings only)
       meeting_url TEXT,
       title TEXT,
       status TEXT NOT NULL DEFAULT 'joining', -- joining -> recording -> done / failed
@@ -187,6 +187,17 @@ export async function initSchema() {
       created_at TIMESTAMPTZ DEFAULT now()
     );
   `);
+
+  // Isolated: adds support for in-person recordings (AssemblyAI) alongside the existing
+  // Recall.ai virtual-meeting path. If this fails for any reason, meetings just stays on
+  // the Recall-only shape rather than taking down the rest of schema init.
+  try {
+    await pool.query(`ALTER TABLE meetings ALTER COLUMN bot_id DROP NOT NULL;`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS transcript_id TEXT UNIQUE;`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'recall';`);
+  } catch (err) {
+    console.error("Could not add in-person recording columns to meetings (non-fatal):", err.message);
+  }
 
   // One-time cleanup (safe to run every startup — a no-op once caught up): Outlook
   // message IDs used to change when a message moved between folders, which made the

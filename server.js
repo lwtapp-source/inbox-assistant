@@ -17,6 +17,7 @@ import { scanForInvoices, applyInvoiceScanResults } from "./src/invoiceScan.js";
 import { applyBulkSortResults } from "./src/bulkSort.js";
 import { checkPendingBatches } from "./src/anthropicBatch.js";
 import { createBot } from "./src/recall.js";
+import { uploadAudio, submitTranscription } from "./src/assemblyai.js";
 import { checkPendingMeetings } from "./src/meetingCheck.js";
 import { searchSimilar } from "./src/semanticSearch.js";
 import { scanForSearchIndex } from "./src/searchIndexScan.js";
@@ -34,6 +35,10 @@ const chatProviders = { google: gmailProvider, outlook: outlookProvider };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const uploadAudioFile = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 250 * 1024 * 1024 }, // up to ~250MB — generous for a couple hours of recording
+});
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -781,11 +786,86 @@ app.get("/meetings", async (req, res) => {
              <input type="text" name="title" placeholder="Meeting title (optional)" style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; min-width:200px;" />
              <input type="url" name="meeting_url" placeholder="Meeting URL (Zoom, Meet, or Teams link)" required style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; min-width:280px;" />
              <button type="submit">Send notetaker</button>
-           </form>`
+           </form>
+
+           <div class="section" style="margin-top:4px; margin-bottom:20px;">
+             <h2 style="font-size:16px;">Or record an in-person conversation</h2>
+             <p class="section-help">Uses your device's microphone — no meeting link needed. Speaker labels come back as "Speaker A/B/C" since there's no calendar to pull real names from.</p>
+             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+               <select id="record-account-id" required style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
+                 <option value="">Which account?</option>
+                 ${accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.email)}</option>`).join("")}
+               </select>
+               <input type="text" id="record-title" placeholder="Meeting title (optional)" style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; min-width:200px;" />
+               <button type="button" id="record-start-btn">🎙️ Start recording</button>
+               <button type="button" id="record-stop-btn" style="display:none; background:var(--urgent);">⏹ Stop &amp; upload</button>
+               <span id="record-status" class="section-help" style="margin:0;"></span>
+             </div>
+           </div>`
         : `<div class="empty-state">Connect an account first from the home page before recording a meeting.</div>`
     }
 
     <div class="priority-list">${meetingRows}</div>
+
+    <script>
+      (function () {
+        let mediaRecorder, chunks, startTime;
+        const startBtn = document.getElementById("record-start-btn");
+        const stopBtn = document.getElementById("record-stop-btn");
+        const statusEl = document.getElementById("record-status");
+        if (!startBtn) return;
+
+        startBtn.addEventListener("click", async () => {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            chunks = [];
+            mediaRecorder = new MediaRecorder(stream);
+            mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+            mediaRecorder.start();
+            startTime = Date.now();
+            startBtn.style.display = "none";
+            stopBtn.style.display = "";
+            statusEl.textContent = "Recording…";
+          } catch (err) {
+            alert("Couldn't access your microphone — check your browser's permission settings for this site.");
+          }
+        });
+
+        stopBtn.addEventListener("click", async () => {
+          const accountId = document.getElementById("record-account-id").value;
+          if (!accountId) {
+            alert("Pick which account this recording should be saved under first.");
+            return;
+          }
+          stopBtn.disabled = true;
+          statusEl.textContent = "Uploading…";
+
+          mediaRecorder.addEventListener("stop", async () => {
+            try {
+              const blob = new Blob(chunks, { type: "audio/webm" });
+              const form = new FormData();
+              form.append("audio", blob, "recording.webm");
+              form.append("account_id", accountId);
+              form.append("title", document.getElementById("record-title").value);
+
+              const res = await fetch("/meetings/record", { method: "POST", body: form });
+              if (!res.ok) throw new Error("Upload failed");
+
+              statusEl.textContent = "Uploaded — transcribing now, check back in a few minutes.";
+              startBtn.style.display = "";
+              stopBtn.style.display = "none";
+              stopBtn.disabled = false;
+              setTimeout(() => window.location.reload(), 1500);
+            } catch (err) {
+              statusEl.textContent = "Upload failed — please try again.";
+              stopBtn.disabled = false;
+            }
+          });
+          mediaRecorder.stop();
+          mediaRecorder.stream.getTracks().forEach((t) => t.stop());
+        });
+      })();
+    </script>
 
     <script>
       document.querySelectorAll(".action-item-checkbox").forEach(function (box) {
@@ -822,14 +902,34 @@ app.post("/meetings/create", async (req, res) => {
   try {
     const bot = await createBot({ meetingUrl: meeting_url, botName: "Inbox Assistant Notetaker" });
     await pool.query(
-      `INSERT INTO meetings (account_id, bot_id, meeting_url, title, status)
-       VALUES ($1, $2, $3, $4, 'joining')`,
+      `INSERT INTO meetings (account_id, bot_id, source, meeting_url, title, status)
+       VALUES ($1, $2, 'recall', $3, $4, 'joining')`,
       [account_id, bot.id, meeting_url, title || ""]
     );
     res.redirect("/meetings?started=1");
   } catch (err) {
     console.error("Failed to create meeting bot:", err.message);
     res.redirect("/meetings");
+  }
+});
+
+app.post("/meetings/record", uploadAudioFile.single("audio"), async (req, res) => {
+  const { account_id, title } = req.body;
+  try {
+    if (!req.file) return res.status(400).json({ ok: false, error: "No audio received" });
+
+    const uploadUrl = await uploadAudio(req.file.buffer);
+    const transcriptId = await submitTranscription(uploadUrl);
+
+    await pool.query(
+      `INSERT INTO meetings (account_id, transcript_id, source, title, status)
+       VALUES ($1, $2, 'in_person', $3, 'processing')`,
+      [account_id, transcriptId, title || "In-person recording"]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Failed to submit in-person recording:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
