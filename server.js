@@ -1176,6 +1176,9 @@ app.get("/poll", async (req, res) => {
   if (req.query.secret !== process.env.POLL_TRIGGER_SECRET) {
     return res.status(401).send("Unauthorized");
   }
+  if (process.env.PAUSED === "true") {
+    return res.json({ paused: true, message: "Everything is paused (PAUSED=true)." });
+  }
   const pollResults = await pollAllAccounts();
   const followUpResults = await checkAllFollowUps();
   const learningResults = await checkAllDraftEdits();
@@ -1731,6 +1734,11 @@ async function start() {
 
   const intervalMs = (Number(process.env.POLL_INTERVAL_MINUTES) || 5) * 60 * 1000;
   setInterval(async () => {
+    if (process.env.PAUSED === "true") {
+      console.log("PAUSED — skipping this cycle entirely.");
+      return;
+    }
+
     console.log("Polling all accounts...");
     const results = await pollAllAccounts();
     console.log(results);
