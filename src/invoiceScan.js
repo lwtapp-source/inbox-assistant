@@ -38,6 +38,15 @@ ${body}`;
 // already tracked. Results are picked up later by checkPendingBatches() on the regular
 // poll cycle, once Anthropic finishes (usually well under an hour, but can take up to
 // 24). Does not re-label, move, or otherwise touch the source messages.
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Gmail's per-user API quota is strict enough that fetching message details (plus PDF
+// attachments) in a tight loop reliably blows through it. Outlook hasn't shown the same
+// issue, but a small delay there too is cheap insurance.
+const DELAY_MS = { google: 250, outlook: 50 };
+
 export async function scanForInvoices(account, limit = 300) {
   const provider = providers[account.provider];
   if (!provider?.listRecentMessageIds) return { submitted: 0 };
@@ -45,6 +54,7 @@ export async function scanForInvoices(account, limit = 300) {
   const ids = await provider.listRecentMessageIds(account, limit);
   const items = [];
   const requestMap = {};
+  const delay = DELAY_MS[account.provider] ?? 100;
   let i = 0;
 
   for (const id of ids) {
@@ -80,6 +90,7 @@ export async function scanForInvoices(account, limit = 300) {
     } catch (err) {
       console.error(`Invoice batch scan: failed to prep message ${id} for ${account.email}:`, err.message);
     }
+    await sleep(delay);
   }
 
   if (!items.length) return { submitted: 0 };

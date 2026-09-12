@@ -34,6 +34,26 @@ function shouldMove(account, label) {
 // Labeling/moving happens once results come back (see applyBulkSortResults), picked up
 // automatically on the regular poll cycle. Deliberately does NOT draft replies or create
 // calendar events for this backlog — that's for regular polling on anything new from here.
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Gmail's per-user API quota is strict enough that fetching message details in a tight
+// loop (as this bulk sort otherwise would) reliably blows through it. Outlook's Graph API
+// hasn't shown the same issue, but a small delay there too is cheap insurance. On a quota
+// error specifically, wait longer and retry once rather than losing that message entirely.
+const DELAY_MS = { google: 250, outlook: 50 };
+
+async function getMessageDetailWithRetry(provider, account, id) {
+  try {
+    return await provider.getMessageDetail(account, id);
+  } catch (err) {
+    if (!/quota/i.test(err.message)) throw err;
+    await sleep(5000);
+    return await provider.getMessageDetail(account, id);
+  }
+}
+
 export async function bulkSortRecent(account, limit = 300) {
   const provider = providers[account.provider];
   if (!provider?.listRecentMessageIds) return { submitted: 0 };
@@ -43,6 +63,7 @@ export async function bulkSortRecent(account, limit = 300) {
   const referenceDate = todayInZone(timezone);
   const items = [];
   const requestMap = {};
+  const delay = DELAY_MS[account.provider] ?? 100;
   let i = 0;
 
   for (const id of ids) {
@@ -53,7 +74,7 @@ export async function bulkSortRecent(account, limit = 300) {
       );
       if (already.rowCount > 0) continue;
 
-      const detail = await provider.getMessageDetail(account, id);
+      const detail = await getMessageDetailWithRetry(provider, account, id);
       const customId = `req_${i++}`;
 
       items.push({
@@ -79,6 +100,7 @@ export async function bulkSortRecent(account, limit = 300) {
     } catch (err) {
       console.error(`Bulk sort batch: failed to prep message ${id} for ${account.email}:`, err.message);
     }
+    await sleep(delay);
   }
 
   if (!items.length) return { submitted: 0 };

@@ -52,6 +52,7 @@ export async function scanForSearchIndex(account, limit = 300) {
       } catch (err) {
         console.error(`Search index scan: failed to fetch message ${id} for ${account.email}:`, err.message);
       }
+      await sleep(account.provider === "google" ? 250 : 50);
     }
 
     if (items.length) {
