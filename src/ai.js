@@ -398,3 +398,39 @@ Preview: ${snippet}`,
   });
   return msg.content[0]?.text?.trim().toLowerCase().startsWith("y");
 }
+
+// ---------- Meeting summarization ----------
+
+// Turns a raw meeting transcript into a short summary and a list of action items.
+// A genuine synthesis task — stays on the full-capability model, not the fast one.
+export async function summarizeMeeting(transcript) {
+  const msg = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 1000,
+    messages: [
+      {
+        role: "user",
+        content: `Summarize this meeting transcript. Reply with JSON only, no commentary,
+no markdown fences:
+{"summary": "<3-6 sentence plain-English summary of what was discussed and decided>", "actionItems": ["<action item 1>", "<action item 2>", ...]}
+
+Only include real action items that were actually discussed — an empty array is fine if
+none were.
+
+Transcript:
+${transcript}`,
+      },
+    ],
+  });
+  const text = msg.content[0]?.text ?? "{}";
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+    return {
+      summary: parsed.summary || "",
+      actionItems: Array.isArray(parsed.actionItems) ? parsed.actionItems : [],
+    };
+  } catch {
+    return { summary: "", actionItems: [] };
+  }
+}

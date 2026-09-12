@@ -16,6 +16,8 @@ import { checkAllDraftEdits } from "./src/learning.js";
 import { scanForInvoices, applyInvoiceScanResults } from "./src/invoiceScan.js";
 import { applyBulkSortResults } from "./src/bulkSort.js";
 import { checkPendingBatches } from "./src/anthropicBatch.js";
+import { createBot } from "./src/recall.js";
+import { checkPendingMeetings } from "./src/meetingCheck.js";
 import { searchSimilar } from "./src/semanticSearch.js";
 import { scanForSearchIndex } from "./src/searchIndexScan.js";
 import { listCustomFiles, getCustomFilesContext } from "./src/customFiles.js";
@@ -151,6 +153,7 @@ function renderLayout({ title, activeAccountId, accounts, body }) {
     { label: "Completed items", hint: "Top priorities", url: "/?view=done" },
     { label: "Chat", hint: "Search inbox or draft from scratch", url: "/chat" },
     { label: "Invoices", hint: "Unpaid", url: "/invoices" },
+    { label: "Meetings", hint: "AI notetaker", url: "/meetings" },
     { label: "Paid invoices", hint: "Invoices", url: "/invoices?view=paid" },
     ...accounts.map((a) => ({
       label: a.email,
@@ -185,6 +188,7 @@ function renderLayout({ title, activeAccountId, accounts, body }) {
         <div class="nav-label">Tools</div>
         <a href="/chat" class="account-link">💬 Chat</a>
         <a href="/invoices" class="account-link">🧾 Invoices</a>
+        <a href="/meetings" class="account-link">🎙️ Meetings</a>
       </nav>
       <nav class="account-nav">
         <div class="nav-label">Accounts</div>
@@ -687,6 +691,102 @@ app.post("/priorities/:id/draft", async (req, res) => {
   }
 });
 
+// ---------- Meetings (AI notetaker) ----------
+
+app.get("/meetings", async (req, res) => {
+  const accounts = await getAccounts();
+  const { rows: meetings } = await pool.query(
+    `SELECT m.*, a.email AS account_email
+     FROM meetings m
+     JOIN accounts a ON a.id = m.account_id
+     ORDER BY m.started_at DESC
+     LIMIT 50`
+  );
+
+  const statusLabel = {
+    joining: "Joining…",
+    recording: "Recording…",
+    in_call_recording: "Recording…",
+    in_waiting_room: "Waiting to be let in…",
+    done: "Done",
+    failed: "Failed",
+  };
+
+  const meetingRows = meetings.length
+    ? meetings
+        .map(
+          (m) => `
+        <div class="priority-row">
+          <div class="priority-main">
+            <div class="priority-top">
+              <span class="priority-subject">${escapeHtml(m.title) || "(untitled meeting)"}</span>
+              <span class="pin-badge" style="${m.status === "done" ? "background:var(--accent-wash); color:var(--accent-dark);" : m.status === "failed" ? "" : "background:var(--surface); color:var(--ink-soft);"}">${statusLabel[m.status] || m.status}</span>
+            </div>
+            <div class="priority-meta">${escapeHtml(m.account_email)} · ${new Date(m.started_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</div>
+            ${
+              m.status === "done"
+                ? `<div class="priority-snippet" style="white-space:pre-wrap;">${escapeHtml(m.summary)}</div>
+                   ${m.action_items?.trim() ? `<div style="margin-top:8px;"><strong style="font-size:13px;">Action items</strong><div class="priority-snippet" style="white-space:pre-wrap;">${escapeHtml(m.action_items)}</div></div>` : ""}`
+                : ""
+            }
+          </div>
+          <div class="priority-actions">
+            <form method="POST" action="/meetings/${m.id}/delete" style="display:inline;">
+              <button type="submit" class="link-button danger">Delete</button>
+            </form>
+          </div>
+        </div>`
+        )
+        .join("")
+    : `<div class="empty-state" style="padding:20px 0;">No meetings recorded yet.</div>`;
+
+  const body = `
+    <h1>Meetings</h1>
+    <p class="subtitle">AI notetaker — sends a bot to record a meeting, then summarizes it with action items.</p>
+
+    ${req.query.started ? `<div class="saved-banner">Notetaker is joining the meeting — summary appears here once the call ends (usually within a few minutes after).</div><br/>` : ""}
+
+    ${
+      accounts.length
+        ? `<form method="POST" action="/meetings/create" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:20px;">
+             <select name="account_id" required style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
+               <option value="">Which account?</option>
+               ${accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.email)}</option>`).join("")}
+             </select>
+             <input type="text" name="title" placeholder="Meeting title (optional)" style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; min-width:200px;" />
+             <input type="url" name="meeting_url" placeholder="Meeting URL (Zoom, Meet, or Teams link)" required style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; min-width:280px;" />
+             <button type="submit">Send notetaker</button>
+           </form>`
+        : `<div class="empty-state">Connect an account first from the home page before recording a meeting.</div>`
+    }
+
+    <div class="priority-list">${meetingRows}</div>
+  `;
+
+  res.send(renderLayout({ title: "Meetings", activeAccountId: null, accounts, body }));
+});
+
+app.post("/meetings/create", async (req, res) => {
+  const { account_id, meeting_url, title } = req.body;
+  try {
+    const bot = await createBot({ meetingUrl: meeting_url, botName: "Inbox Assistant Notetaker" });
+    await pool.query(
+      `INSERT INTO meetings (account_id, bot_id, meeting_url, title, status)
+       VALUES ($1, $2, $3, $4, 'joining')`,
+      [account_id, bot.id, meeting_url, title || ""]
+    );
+    res.redirect("/meetings?started=1");
+  } catch (err) {
+    console.error("Failed to create meeting bot:", err.message);
+    res.redirect("/meetings");
+  }
+});
+
+app.post("/meetings/:id/delete", async (req, res) => {
+  await pool.query(`DELETE FROM meetings WHERE id = $1`, [req.params.id]);
+  res.redirect("/meetings");
+});
+
 // ---------- Invoices ----------
 
 app.get("/invoices", async (req, res) => {
@@ -1080,7 +1180,14 @@ app.get("/poll", async (req, res) => {
   const followUpResults = await checkAllFollowUps();
   const learningResults = await checkAllDraftEdits();
   const batchResults = await processPendingBatches();
-  res.json({ poll: pollResults, followUps: followUpResults, learning: learningResults, batches: batchResults });
+  const meetingResults = await checkPendingMeetings();
+  res.json({
+    poll: pollResults,
+    followUps: followUpResults,
+    learning: learningResults,
+    batches: batchResults,
+    meetings: meetingResults,
+  });
 });
 
 app.get("/health", (_req, res) => res.send("ok"));
@@ -1639,6 +1746,10 @@ async function start() {
     console.log("Checking pending batch jobs...");
     const batchResults = await processPendingBatches();
     console.log(batchResults);
+
+    console.log("Checking pending meetings...");
+    const meetingResults = await checkPendingMeetings();
+    console.log(meetingResults);
   }, intervalMs);
 }
 

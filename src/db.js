@@ -164,6 +164,20 @@ export async function initSchema() {
       created_at TIMESTAMPTZ DEFAULT now(),
       completed_at TIMESTAMPTZ
     );
+
+    CREATE TABLE IF NOT EXISTS meetings (
+      id SERIAL PRIMARY KEY,
+      account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+      bot_id TEXT NOT NULL UNIQUE,       -- Recall.ai's bot id
+      meeting_url TEXT,
+      title TEXT,
+      status TEXT NOT NULL DEFAULT 'joining', -- joining -> recording -> done / failed
+      transcript TEXT,
+      summary TEXT,
+      action_items TEXT,
+      started_at TIMESTAMPTZ DEFAULT now(),
+      completed_at TIMESTAMPTZ
+    );
   `);
 
   // One-time cleanup (safe to run every startup — a no-op once caught up): Outlook
