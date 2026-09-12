@@ -703,6 +703,18 @@ app.get("/meetings", async (req, res) => {
      LIMIT 50`
   );
 
+  const meetingIds = meetings.map((m) => m.id);
+  const { rows: actionItemRows } = meetingIds.length
+    ? await pool.query(
+        `SELECT * FROM meeting_action_items WHERE meeting_id = ANY($1) ORDER BY id ASC`,
+        [meetingIds]
+      )
+    : { rows: [] };
+  const actionItemsByMeeting = {};
+  for (const item of actionItemRows) {
+    (actionItemsByMeeting[item.meeting_id] ??= []).push(item);
+  }
+
   const statusLabel = {
     joining: "Joining…",
     recording: "Recording…",
@@ -714,8 +726,26 @@ app.get("/meetings", async (req, res) => {
 
   const meetingRows = meetings.length
     ? meetings
-        .map(
-          (m) => `
+        .map((m) => {
+          const items = actionItemsByMeeting[m.id] || [];
+          const actionItemsHtml = items.length
+            ? `<div style="margin-top:10px;">
+                 <strong style="font-size:13px;">Action items</strong>
+                 <div style="margin-top:4px;">
+                   ${items
+                     .map(
+                       (item) => `
+                     <label style="display:flex; align-items:flex-start; gap:8px; font-size:13.5px; padding:4px 0; cursor:pointer; ${item.done ? "color:var(--ink-faint); text-decoration:line-through;" : ""}">
+                       <input type="checkbox" class="action-item-checkbox" data-url="/meetings/action-items/${item.id}/toggle" ${item.done ? "checked" : ""} style="margin-top:3px;" />
+                       ${escapeHtml(item.text)}
+                     </label>`
+                     )
+                     .join("")}
+                 </div>
+               </div>`
+            : "";
+
+          return `
         <div class="priority-row">
           <div class="priority-main">
             <div class="priority-top">
@@ -723,20 +753,15 @@ app.get("/meetings", async (req, res) => {
               <span class="pin-badge" style="${m.status === "done" ? "background:var(--accent-wash); color:var(--accent-dark);" : m.status === "failed" ? "" : "background:var(--surface); color:var(--ink-soft);"}">${statusLabel[m.status] || m.status}</span>
             </div>
             <div class="priority-meta">${escapeHtml(m.account_email)} · ${new Date(m.started_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</div>
-            ${
-              m.status === "done"
-                ? `<div class="priority-snippet" style="white-space:pre-wrap;">${escapeHtml(m.summary)}</div>
-                   ${m.action_items?.trim() ? `<div style="margin-top:8px;"><strong style="font-size:13px;">Action items</strong><div class="priority-snippet" style="white-space:pre-wrap;">${escapeHtml(m.action_items)}</div></div>` : ""}`
-                : ""
-            }
+            ${m.status === "done" ? `<div class="priority-snippet" style="white-space:pre-wrap;">${escapeHtml(m.summary)}</div>${actionItemsHtml}` : ""}
           </div>
           <div class="priority-actions">
             <form method="POST" action="/meetings/${m.id}/delete" style="display:inline;">
               <button type="submit" class="link-button danger">Delete</button>
             </form>
           </div>
-        </div>`
-        )
+        </div>`;
+        })
         .join("")
     : `<div class="empty-state" style="padding:20px 0;">No meetings recorded yet.</div>`;
 
@@ -761,6 +786,32 @@ app.get("/meetings", async (req, res) => {
     }
 
     <div class="priority-list">${meetingRows}</div>
+
+    <script>
+      document.querySelectorAll(".action-item-checkbox").forEach(function (box) {
+        box.addEventListener("change", async function () {
+          var label = box.closest("label");
+          box.disabled = true;
+          try {
+            var res = await fetch(box.dataset.url, { method: "POST" });
+            if (!res.ok) throw new Error("failed");
+            if (box.checked) {
+              label.style.color = "var(--ink-faint)";
+              label.style.textDecoration = "line-through";
+            } else {
+              label.style.color = "";
+              label.style.textDecoration = "";
+            }
+          } catch (err) {
+            console.error(err);
+            box.checked = !box.checked;
+            alert("Couldn't update that — please try again.");
+          } finally {
+            box.disabled = false;
+          }
+        });
+      });
+    </script>
   `;
 
   res.send(renderLayout({ title: "Meetings", activeAccountId: null, accounts, body }));
@@ -785,6 +836,13 @@ app.post("/meetings/create", async (req, res) => {
 app.post("/meetings/:id/delete", async (req, res) => {
   await pool.query(`DELETE FROM meetings WHERE id = $1`, [req.params.id]);
   res.redirect("/meetings");
+});
+
+app.post("/meetings/action-items/:id/toggle", async (req, res) => {
+  await pool.query(`UPDATE meeting_action_items SET done = NOT done WHERE id = $1`, [
+    req.params.id,
+  ]);
+  res.sendStatus(200);
 });
 
 // ---------- Invoices ----------

@@ -174,9 +174,17 @@ export async function initSchema() {
       status TEXT NOT NULL DEFAULT 'joining', -- joining -> recording -> done / failed
       transcript TEXT,
       summary TEXT,
-      action_items TEXT,
+      action_items TEXT,                 -- deprecated, superseded by meeting_action_items below
       started_at TIMESTAMPTZ DEFAULT now(),
       completed_at TIMESTAMPTZ
+    );
+
+    CREATE TABLE IF NOT EXISTS meeting_action_items (
+      id SERIAL PRIMARY KEY,
+      meeting_id INTEGER REFERENCES meetings(id) ON DELETE CASCADE,
+      text TEXT NOT NULL,
+      done BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT now()
     );
   `);
 

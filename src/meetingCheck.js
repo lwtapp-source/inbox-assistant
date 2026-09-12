@@ -35,10 +35,16 @@ export async function checkPendingMeetings() {
 
         await pool.query(
           `UPDATE meetings
-           SET status = 'done', transcript = $1, summary = $2, action_items = $3, completed_at = now()
-           WHERE id = $4`,
-          [transcriptText, summary, actionItems.map((a) => `- ${a}`).join("\n"), meeting.id]
+           SET status = 'done', transcript = $1, summary = $2, completed_at = now()
+           WHERE id = $3`,
+          [transcriptText, summary, meeting.id]
         );
+        for (const item of actionItems) {
+          await pool.query(
+            `INSERT INTO meeting_action_items (meeting_id, text) VALUES ($1, $2)`,
+            [meeting.id, item]
+          );
+        }
         results.push({ id: meeting.id, title: meeting.title, status: "done" });
       } else if (["fatal", "error", "call_ended_early"].includes(recallStatus)) {
         await pool.query(`UPDATE meetings SET status = 'failed', completed_at = now() WHERE id = $1`, [
