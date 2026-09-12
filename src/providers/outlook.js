@@ -2,6 +2,32 @@ import { getAccessToken } from "../auth/outlook.js";
 
 const GRAPH = "https://graph.microsoft.com/v1.0";
 
+// Outlook returns message bodies as HTML by default. Sending that raw into a prompt
+// burns tokens on styling/markup that add no informational value — Gmail's provider
+// already extracts plain text for the same reason. This is a simple, good-enough strip,
+// not a full HTML parser; it doesn't need to be perfect, just clean enough for an LLM.
+function stripHtml(html) {
+  if (!html) return "";
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|tr|li)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+const MAX_BODY_CHARS = 8000; // matches the cap already used for PDF attachment text elsewhere
+
 async function graphFetch(account, path, options = {}) {
   const token = await getAccessToken(account);
   const res = await fetch(`${GRAPH}${path}`, {
@@ -107,9 +133,10 @@ export async function getThreadContext(account, detail) {
   return (data.value ?? [])
     .filter((m) => m.id !== detail._graphId)
     .sort((a, b) => new Date(a.receivedDateTime) - new Date(b.receivedDateTime))
+    .slice(-10) // most recent 10 — enough context for a draft without an unbounded long thread
     .map((m) => ({
       from: m.from?.emailAddress?.address ?? "",
-      body: m.body?.content ?? "",
+      body: stripHtml(m.body?.content).slice(0, MAX_BODY_CHARS),
     }));
 }
 
@@ -122,7 +149,7 @@ export async function getMessageDetail(account, id) {
     from: m.from?.emailAddress?.address ?? "",
     subject: m.subject ?? "",
     snippet: m.bodyPreview ?? "",
-    body: m.body?.content ?? m.bodyPreview ?? "",
+    body: (stripHtml(m.body?.content) || m.bodyPreview || "").slice(0, MAX_BODY_CHARS),
     conversationId: m.conversationId,
     messageIdHeader: m.internetMessageId,
     webLink: m.webLink ?? "",
