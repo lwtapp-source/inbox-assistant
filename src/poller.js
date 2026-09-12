@@ -72,6 +72,52 @@ function isAlwaysDraftSender(fromHeader, alwaysDraftSenders) {
   return entries.some((entry) => from.includes(entry));
 }
 
+// Generates a reply draft and creates it in the provider — shared by automatic drafting
+// (poller, when auto_draft_replies is on) and the manual "Draft reply" button (Top
+// Priorities, when it's off). Returns the created draft info.
+export async function generateAndCreateDraft(account, provider, detail) {
+  const voiceProfile = await getOrRefreshVoiceProfile(account, provider);
+  const threadContext = provider.getThreadContext
+    ? await provider.getThreadContext(account, detail)
+    : [];
+
+  let availabilityContext = "";
+  try {
+    if (await needsScheduling(detail.subject, detail.snippet)) {
+      const windows = await getAvailability(account);
+      availabilityContext = formatAvailabilityWindows(windows, account.timezone);
+    }
+  } catch (err) {
+    console.error(`Scheduling check failed for ${account.email}:`, err.message);
+  }
+
+  const replyText = await draftReply({
+    voiceProfile,
+    incomingEmail: detail,
+    threadContext,
+    toneInstructions: account.tone_instructions,
+    filesContext: await getCustomFilesContext(account.id),
+    learnedStyleNotes: account.learned_style_notes,
+    availabilityContext,
+  });
+  const finalText = account.signature?.trim()
+    ? `${replyText}\n\n${account.signature.trim()}`
+    : replyText;
+  const created = await provider.createDraftReply(account, { detail, body: finalText });
+
+  const threadKey = detail.threadId || detail.conversationId;
+  if (created?.draftId && threadKey) {
+    await pool.query(
+      `INSERT INTO draft_tracking (account_id, draft_message_id, thread_key, original_text)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (account_id, draft_message_id) DO NOTHING`,
+      [account.id, created.draftId, threadKey, replyText]
+    );
+  }
+
+  return created;
+}
+
 export async function pollAccount(account) {
   const provider = providerFor(account);
   const messageIds = await provider.listUnreadMessageIds(account);
@@ -153,45 +199,9 @@ export async function pollAccount(account) {
 
     let draftCreated = false;
     const forceDraft = isAlwaysDraftSender(detail.from, account.always_draft_senders);
-    if (label === "urgent" || forceDraft) {
-      const threadContext = provider.getThreadContext
-        ? await provider.getThreadContext(account, detail)
-        : [];
-
-      let availabilityContext = "";
-      try {
-        if (await needsScheduling(detail.subject, detail.snippet)) {
-          const windows = await getAvailability(account);
-          availabilityContext = formatAvailabilityWindows(windows, account.timezone);
-        }
-      } catch (err) {
-        console.error(`Scheduling check failed for ${account.email}:`, err.message);
-      }
-
-      const replyText = await draftReply({
-        voiceProfile,
-        incomingEmail: detail,
-        threadContext,
-        toneInstructions: account.tone_instructions,
-        filesContext: await getCustomFilesContext(account.id),
-        learnedStyleNotes: account.learned_style_notes,
-        availabilityContext,
-      });
-      const finalText = account.signature?.trim()
-        ? `${replyText}\n\n${account.signature.trim()}`
-        : replyText;
-      const created = await provider.createDraftReply(account, { detail, body: finalText });
+    if (label === "urgent" && (account.auto_draft_replies || forceDraft)) {
+      await generateAndCreateDraft(account, provider, detail);
       draftCreated = true;
-
-      const threadKey = detail.threadId || detail.conversationId;
-      if (created?.draftId && threadKey) {
-        await pool.query(
-          `INSERT INTO draft_tracking (account_id, draft_message_id, thread_key, original_text)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (account_id, draft_message_id) DO NOTHING`,
-          [account.id, created.draftId, threadKey, replyText]
-        );
-      }
     }
 
     await pool.query(

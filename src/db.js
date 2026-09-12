@@ -30,6 +30,7 @@ export async function initSchema() {
       custom_instructions TEXT,         -- free-text triage rules, folded into the classification prompt
       tone_instructions TEXT,           -- free-text writing-style guidance, folded into the drafting prompt
       always_draft_senders TEXT,        -- newline/comma-separated emails or domains that always get a draft
+      auto_draft_replies BOOLEAN DEFAULT true, -- if false, urgent mail waits for a manual "Draft reply" click instead
       signature TEXT,                   -- plain-text signature appended to every generated draft
       learned_style_notes TEXT,         -- auto-updated notes from comparing drafts to what was actually sent
       active BOOLEAN DEFAULT true,      -- false = disconnected but data retained; skipped by polling
@@ -51,6 +52,7 @@ export async function initSchema() {
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS custom_instructions TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS tone_instructions TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS always_draft_senders TEXT;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS auto_draft_replies BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS signature TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS learned_style_notes TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true;

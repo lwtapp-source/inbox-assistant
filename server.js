@@ -9,7 +9,7 @@ import connectPgSimple from "connect-pg-simple";
 import { initSchema, pool } from "./src/db.js";
 import { getAuthUrl as getGoogleAuthUrl, handleOAuthCallback as handleGoogleCallback } from "./src/auth/google.js";
 import { getAuthUrl as getOutlookAuthUrl, handleOAuthCallback as handleOutlookCallback } from "./src/auth/outlook.js";
-import { pollAllAccounts } from "./src/poller.js";
+import { pollAllAccounts, generateAndCreateDraft } from "./src/poller.js";
 import { bulkSortRecent } from "./src/bulkSort.js";
 import { checkAllFollowUps } from "./src/followUp.js";
 import { checkAllDraftEdits } from "./src/learning.js";
@@ -329,7 +329,7 @@ app.get("/", async (req, res) => {
 
   const { rows: priorities } = selectedAccountIds.length
     ? await pool.query(
-        `SELECT pm.id, pm.subject, pm.from_address, pm.snippet, pm.web_link, pm.pinned,
+        `SELECT pm.id, pm.subject, pm.from_address, pm.snippet, pm.web_link, pm.pinned, pm.draft_created,
                 a.email AS account_email, a.provider AS account_provider
          FROM processed_messages pm
          JOIN accounts a ON a.id = pm.account_id
@@ -361,6 +361,15 @@ app.get("/", async (req, res) => {
                       ? p.web_link + (p.web_link.includes("?") ? "&" : "?") + "login_hint=" + encodeURIComponent(p.account_email)
                       : p.web_link
                   }">Open</a>`
+                : ""
+            }
+            ${
+              !showDone && !p.draft_created
+                ? `<form method="POST" action="/priorities/${p.id}/draft" style="display:inline;">
+                     <button type="submit" class="link-button">Draft reply</button>
+                   </form>`
+                : !showDone
+                ? `<span class="section-help" style="margin:0;">Draft ready</span>`
                 : ""
             }
             ${
@@ -498,6 +507,7 @@ app.get("/", async (req, res) => {
             var row = form.closest(".priority-row");
             var submitBtn = form.querySelector("button[type=submit]");
             if (submitBtn) submitBtn.disabled = true;
+            if (action.endsWith("/draft") && submitBtn) submitBtn.textContent = "Drafting…";
 
             try {
               var res = await fetch(action, {
@@ -506,7 +516,9 @@ app.get("/", async (req, res) => {
               });
               if (!res.ok) throw new Error("Request failed: " + res.status);
 
-              if (action.endsWith("/pin")) {
+              if (action.endsWith("/draft")) {
+                submitBtn.textContent = "Draft ready";
+              } else if (action.endsWith("/pin")) {
                 var badge = row.querySelector(".pin-badge");
                 if (badge) {
                   badge.remove();
@@ -533,7 +545,10 @@ app.get("/", async (req, res) => {
             } catch (err) {
               console.error(err);
               alert("Something went wrong — please try again.");
-              if (submitBtn) submitBtn.disabled = false;
+              if (submitBtn) {
+                submitBtn.disabled = false;
+                if (action.endsWith("/draft")) submitBtn.textContent = "Draft reply";
+              }
             }
           });
         });
@@ -640,6 +655,36 @@ app.post("/priorities/:id/delete", async (req, res) => {
   await pool.query(`DELETE FROM processed_messages WHERE id = $1`, [req.params.id]);
   if (isAjax(req)) return res.sendStatus(200);
   res.redirect("/");
+});
+
+app.post("/priorities/:id/draft", async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT * FROM processed_messages WHERE id = $1`, [
+      req.params.id,
+    ]);
+    const pm = rows[0];
+    if (!pm) return res.status(404).json({ ok: false, error: "Not found" });
+
+    const { rows: accountRows } = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [
+      pm.account_id,
+    ]);
+    const account = accountRows[0];
+    const provider = account ? chatProviders[account.provider] : null;
+    if (!account || !provider) return res.status(404).json({ ok: false, error: "Account not found" });
+
+    const detail = await provider.getMessageDetail(account, pm.message_id);
+    await generateAndCreateDraft(account, provider, detail);
+    await pool.query(`UPDATE processed_messages SET draft_created = true WHERE id = $1`, [
+      req.params.id,
+    ]);
+
+    if (isAjax(req)) return res.sendStatus(200);
+    res.redirect("/");
+  } catch (err) {
+    console.error("Manual draft creation failed:", err.message);
+    if (isAjax(req)) return res.status(500).json({ ok: false, error: err.message });
+    res.redirect("/");
+  }
 });
 
 // ---------- Invoices ----------
@@ -1115,7 +1160,7 @@ app.get("/settings/:id", async (req, res) => {
   const { rows } = await pool.query(
     `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders, signature,
             learned_style_notes, timezone, work_start_hour, work_end_hour, notice_hours,
-            scheduling_days_ahead, auto_calendar_events, active,
+            scheduling_days_ahead, auto_calendar_events, active, auto_draft_replies,
             move_urgent, move_fyi, move_marketing, move_notifications, move_invoices
      FROM accounts WHERE id = $1`,
     [req.params.id]
@@ -1205,6 +1250,25 @@ app.get("/settings/:id", async (req, res) => {
           direct. I'm a practice manager at Sandhills Animal Hospital. I sign off with 'Thanks, Sandy'."
         </p>
         <textarea name="tone_instructions" rows="5">${escapeHtml(account.tone_instructions)}</textarea>
+      </div>
+
+      <div class="section">
+        <h2>Auto-draft replies</h2>
+        <p class="section-help">
+          When on, urgent mail automatically gets a drafted reply, ready in Drafts. When
+          off, urgent mail is triaged and shown on Top Priorities as usual, but you click
+          "Draft reply" there when you actually want one — saves the cost of drafting
+          things you were going to handle yourself anyway. Senders listed below under
+          "Always draft for these senders" still get a draft either way.
+        </p>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <span class="category-state">${account.auto_draft_replies ? "Automatic" : "Manual — click to draft"}</span>
+          <label class="toggle">
+            <input type="checkbox" name="auto_draft_replies" ${account.auto_draft_replies ? "checked" : ""} data-on="Automatic" data-off="Manual — click to draft" />
+            <span class="track"></span>
+            <span class="thumb"></span>
+          </label>
+        </div>
       </div>
 
       <div class="section">
@@ -1396,7 +1460,7 @@ app.get("/settings/:id", async (req, res) => {
     <script>
       document.querySelectorAll('.toggle input[type=checkbox]').forEach((el) => {
         el.addEventListener('change', () => {
-          const stateEl = el.closest('.category-row').querySelector('.category-state');
+          const stateEl = el.closest('.category-row, .section').querySelector('.category-state');
           if (!stateEl) return;
           stateEl.textContent = el.checked ? el.dataset.on : el.dataset.off;
         });
@@ -1505,8 +1569,8 @@ app.post("/settings/:id", async (req, res) => {
          timezone = $5, work_start_hour = $6, work_end_hour = $7, notice_hours = $8,
          scheduling_days_ahead = $9, auto_calendar_events = $10,
          move_urgent = $11, move_fyi = $12, move_marketing = $13, move_notifications = $14,
-         move_invoices = $15
-     WHERE id = $16`,
+         move_invoices = $15, auto_draft_replies = $16
+     WHERE id = $17`,
     [
       req.body.custom_instructions ?? "",
       req.body.tone_instructions ?? "",
@@ -1523,6 +1587,7 @@ app.post("/settings/:id", async (req, res) => {
       !!req.body.move_marketing,
       !!req.body.move_notifications,
       !!req.body.move_invoices,
+      !!req.body.auto_draft_replies,
       req.params.id,
     ]
   );
