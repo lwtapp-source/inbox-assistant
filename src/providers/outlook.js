@@ -54,8 +54,8 @@ async function graphFetch(account, path, options = {}) {
 // through expensive live processing one at a time. A backlog like that belongs in the
 // batch-based history scan instead. Caps how many go out per cycle so a burst of
 // genuinely new mail doesn't overwhelm one poll either.
-const RECENT_WINDOW = 300;
-const MAX_PER_CYCLE = 20;
+const RECENT_WINDOW = 150;
+const MAX_PER_CYCLE = 10;
 
 export async function listUnreadMessageIds(account) {
   const params = new URLSearchParams({
