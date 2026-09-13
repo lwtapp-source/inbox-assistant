@@ -141,7 +141,12 @@ function escapeHtml(str) {
     .replace(/'/g, "&#39;");
 }
 
-function renderLayout({ title, activeAccountId, accounts, body }) {
+async function renderLayout({ title, activeAccountId, accounts, body }) {
+  const { rows: pausedRows } = await pool.query(
+    `SELECT COUNT(*)::int AS count FROM accounts WHERE active = false`
+  );
+  const pausedCount = pausedRows[0]?.count || 0;
+
   const navLinks = accounts.length
     ? accounts
         .map(
@@ -189,6 +194,11 @@ function renderLayout({ title, activeAccountId, accounts, body }) {
     <aside class="sidebar">
       <a href="/" style="text-decoration:none;"><div class="wordmark">Inbox<br />Assistant</div></a>
       <div class="cmdk-hint">Press <kbd>⌘K</kbd> to jump anywhere</div>
+      ${
+        pausedCount > 0
+          ? `<a href="/" style="display:block; margin-top:10px; padding:6px 10px; background:rgba(255,255,255,0.06); border-radius:6px; color:#e0b989; font-size:12.5px; text-decoration:none;">⏸ ${pausedCount} account${pausedCount === 1 ? "" : "s"} paused</a>`
+          : ""
+      }
       <nav class="account-nav">
         <div class="nav-label">Tools</div>
         <a href="/chat" class="account-link">💬 Chat</a>
@@ -630,7 +640,7 @@ app.get("/", async (req, res) => {
     </script>
   `;
 
-  res.send(renderLayout({ title: "Home", activeAccountId: null, accounts, body }));
+  res.send(await renderLayout({ title: "Home", activeAccountId: null, accounts, body }));
 });
 
 // ---------- Top priorities actions ----------
@@ -894,7 +904,7 @@ app.get("/meetings", async (req, res) => {
     </script>
   `;
 
-  res.send(renderLayout({ title: "Meetings", activeAccountId: null, accounts, body }));
+  res.send(await renderLayout({ title: "Meetings", activeAccountId: null, accounts, body }));
 });
 
 app.post("/meetings/create", async (req, res) => {
@@ -1041,7 +1051,7 @@ app.get("/invoices", async (req, res) => {
     <div class="priority-list">${invoiceListHtml}</div>
   `;
 
-  res.send(renderLayout({ title: "Invoices", activeAccountId: null, accounts, body }));
+  res.send(await renderLayout({ title: "Invoices", activeAccountId: null, accounts, body }));
 });
 
 app.post("/invoices/scan", async (req, res) => {
@@ -1083,7 +1093,7 @@ app.get("/chat", async (req, res) => {
     result: null,
     indexing: !!req.query.indexing,
   });
-  res.send(renderLayout({ title: "Chat", activeAccountId: null, accounts, body }));
+  res.send(await renderLayout({ title: "Chat", activeAccountId: null, accounts, body }));
 });
 
 app.post("/chat/build-index", async (req, res) => {
@@ -1184,7 +1194,7 @@ app.post("/chat", async (req, res) => {
   }
 
   const body = renderChatPage({ accounts, selectedAccountId: accountId, message, result });
-  res.send(renderLayout({ title: "Chat", activeAccountId: null, accounts, body }));
+  res.send(await renderLayout({ title: "Chat", activeAccountId: null, accounts, body }));
 });
 
 function renderChatPage({ accounts, selectedAccountId, message, result, indexing }) {
@@ -1437,7 +1447,7 @@ app.get("/settings/:id", async (req, res) => {
   if (!account) {
     return res
       .status(404)
-      .send(renderLayout({ title: "Not found", activeAccountId: null, accounts, body: "<h1>Account not found</h1>" }));
+      .send(await renderLayout({ title: "Not found", activeAccountId: null, accounts, body: "<h1>Account not found</h1>" }));
   }
 
   const customFiles = await listCustomFiles(account.id);
@@ -1736,7 +1746,7 @@ app.get("/settings/:id", async (req, res) => {
     </script>
   `;
 
-  res.send(renderLayout({ title: account.email, activeAccountId: account.id, accounts, body }));
+  res.send(await renderLayout({ title: account.email, activeAccountId: account.id, accounts, body }));
 });
 
 app.post("/settings/:id/files", upload.single("file"), async (req, res) => {
