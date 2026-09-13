@@ -1508,9 +1508,23 @@ app.get("/settings/:id", async (req, res) => {
     ${req.query.uploaded ? `<div class="saved-banner">File uploaded</div><br/>` : ""}
     ${req.query.upload_error ? `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">${req.query.upload_error}</div><br/>` : ""}
 
+    <nav class="settings-jump-nav">
+      <a href="#triage-rules">Triage</a>
+      <a href="#category-routing">Routing</a>
+      <a href="#writing-tone">Tone</a>
+      <a href="#auto-draft">Auto-draft</a>
+      <a href="#always-draft">Always draft</a>
+      <a href="#signature">Signature</a>
+      <a href="#scheduling">Scheduling</a>
+      <a href="#custom-files">Files</a>
+      <a href="#learned-notes">Learned</a>
+      <a href="#detected-appointments">Appointments</a>
+      <a href="#disconnect" style="color:var(--urgent);">Disconnect</a>
+    </nav>
+
     <form method="POST" action="/settings/${account.id}">
       <div class="section">
-        <h2>Triage rules</h2>
+        <h2 id="triage-rules">Triage rules</h2>
         <p class="section-help">
           Plain-language rules for how mail here gets classified, folded into the
           classification prompt alongside the subject, sender, and preview of each email.
@@ -1521,7 +1535,7 @@ app.get("/settings/:id", async (req, res) => {
       </div>
 
       <div class="section">
-        <h2>Writing tone / style</h2>
+        <h2 id="writing-tone">Writing tone / style</h2>
         <p class="section-help">
           How you like drafts written, separate from the triage rules above — folded into the
           drafting prompt alongside the auto-learned voice profile. Example: "I'm concise and
@@ -1531,7 +1545,7 @@ app.get("/settings/:id", async (req, res) => {
       </div>
 
       <div class="section">
-        <h2>Auto-draft replies</h2>
+        <h2 id="auto-draft">Auto-draft replies</h2>
         <p class="section-help">
           When on, urgent mail automatically gets a drafted reply, ready in Drafts. When
           off, urgent mail is triaged and shown on Top Priorities as usual, but you click
@@ -1550,7 +1564,7 @@ app.get("/settings/:id", async (req, res) => {
       </div>
 
       <div class="section">
-        <h2>Always draft for these senders</h2>
+        <h2 id="always-draft">Always draft for these senders</h2>
         <p class="section-help">
           One email or domain per line, e.g. <code>manager@sandhillsvet.com</code> or
           <code>@keysupplier.com</code>. Mail from these senders always gets a draft, even if
@@ -1560,7 +1574,7 @@ app.get("/settings/:id", async (req, res) => {
       </div>
 
       <div class="section">
-        <h2>Email signature</h2>
+        <h2 id="signature">Email signature</h2>
         <p class="section-help">
           Plain-text signature appended to every generated draft. Drafts created through the
           API don't automatically pick up the signature configured in Gmail or Outlook, so
@@ -1570,7 +1584,7 @@ app.get("/settings/:id", async (req, res) => {
       </div>
 
       <div class="section">
-        <h2>Scheduling</h2>
+        <h2 id="scheduling">Scheduling</h2>
         <p class="section-help">
           When a reply needs a meeting time, Claude checks your real calendar and proposes
           actual free times instead of guessing. Also requires calendar access — if you
@@ -1617,7 +1631,7 @@ app.get("/settings/:id", async (req, res) => {
       </div>
 
       <div class="section">
-        <h2>Category routing</h2>
+        <h2 id="category-routing">Category routing</h2>
         <p class="section-help">
           Choose whether each category stays visible in the inbox or moves into its own folder.
         </p>
@@ -1628,7 +1642,7 @@ app.get("/settings/:id", async (req, res) => {
     </form>
 
     <div class="section">
-      <h2>Custom files</h2>
+      <h2 id="custom-files">Custom files</h2>
       <p class="section-help">
         Upload reference material — a client list, brand guidelines, an FAQ, a company
         overview — for Claude to draw on when writing drafts. Accepts .txt, .csv, and .pdf,
@@ -1642,7 +1656,7 @@ app.get("/settings/:id", async (req, res) => {
     </div>
 
     <div class="section">
-      <h2>Learned from your edits</h2>
+      <h2 id="learned-notes">Learned from your edits</h2>
       <p class="section-help">
         Every time a draft gets edited before sending, Claude compares what it wrote to
         what you actually sent and updates these notes automatically — no need to write
@@ -1660,7 +1674,7 @@ app.get("/settings/:id", async (req, res) => {
     </div>
 
     <div class="section">
-      <h2>Detected appointments</h2>
+      <h2 id="detected-appointments">Detected appointments</h2>
       <p class="section-help">
         Calendar events Claude has automatically created from confirmed appointment emails.
         Delete here to remove it from both this list and your actual calendar.
@@ -1692,7 +1706,7 @@ app.get("/settings/:id", async (req, res) => {
     </div>
 
     <div class="section" style="border-top:1px solid var(--border); padding-top:22px;">
-      <h2 style="color:var(--urgent);">Disconnect this account</h2>
+      <h2 id="disconnect" style="color:var(--urgent);">Disconnect this account</h2>
       ${
         account.active
           ? `<p class="section-help">
