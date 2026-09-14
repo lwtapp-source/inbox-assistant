@@ -41,6 +41,7 @@ export async function initSchema() {
       work_end_hour INTEGER DEFAULT 17,
       notice_hours INTEGER DEFAULT 24,            -- minimum notice before a proposed slot
       scheduling_days_ahead INTEGER DEFAULT 7,    -- how many days out to look for availability
+      follow_up_days INTEGER DEFAULT 3,           -- days with no reply before flagging a sent message "to follow up"
       auto_calendar_events BOOLEAN DEFAULT true,  -- auto-create calendar events from appointment-style emails
       move_urgent BOOLEAN DEFAULT false,       -- move "urgent"-labeled mail out of the inbox into a folder
       move_fyi BOOLEAN DEFAULT true,           -- move "fyi"-labeled mail out of the inbox into a folder
@@ -70,6 +71,7 @@ export async function initSchema() {
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS work_end_hour INTEGER DEFAULT 17;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS notice_hours INTEGER DEFAULT 24;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS scheduling_days_ahead INTEGER DEFAULT 7;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS follow_up_days INTEGER DEFAULT 3;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS auto_calendar_events BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_urgent BOOLEAN DEFAULT false;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_fyi BOOLEAN DEFAULT true;

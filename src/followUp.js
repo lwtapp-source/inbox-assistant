@@ -7,8 +7,9 @@ const providers = {
   outlook: outlookProvider,
 };
 
-// How many days to wait with no reply before flagging a sent message as "to follow up".
-const FOLLOW_UP_DAYS = Number(process.env.FOLLOW_UP_DAYS) || 3;
+// How many days to wait with no reply before flagging a sent message as "to follow up",
+// when an account hasn't set its own follow_up_days.
+const DEFAULT_FOLLOW_UP_DAYS = Number(process.env.FOLLOW_UP_DAYS) || 3;
 
 export async function checkFollowUps(account, limit = 50) {
   const provider = providers[account.provider];
@@ -52,7 +53,8 @@ export async function checkFollowUps(account, limit = 50) {
     }
 
     const ageDays = (Date.now() - new Date(row.sent_at).getTime()) / (1000 * 60 * 60 * 24);
-    if (row.status === "pending" && ageDays >= FOLLOW_UP_DAYS) {
+    const followUpDays = account.follow_up_days ?? DEFAULT_FOLLOW_UP_DAYS;
+    if (row.status === "pending" && ageDays >= followUpDays) {
       try {
         await provider.applyLabel(account, row.message_id, "to_follow_up");
         await pool.query(

@@ -1565,7 +1565,7 @@ app.get("/settings/:id", async (req, res) => {
     `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders,
             no_label_senders, category_rules, signature,
             learned_style_notes, timezone, work_start_hour, work_end_hour, notice_hours,
-            scheduling_days_ahead, auto_calendar_events, active, auto_draft_replies,
+            scheduling_days_ahead, follow_up_days, auto_calendar_events, active, auto_draft_replies,
             move_urgent, move_fyi, move_marketing, move_notifications, move_invoices
      FROM accounts WHERE id = $1`,
     [req.params.id]
@@ -1641,6 +1641,7 @@ app.get("/settings/:id", async (req, res) => {
       <a href="#category-routing">Routing</a>
       <a href="#writing-tone">Tone</a>
       <a href="#auto-draft">Auto-draft</a>
+      <a href="#follow-ups">Follow-ups</a>
       <a href="#always-draft">Always draft</a>
       <a href="#signature">Signature</a>
       <a href="#scheduling">Scheduling</a>
@@ -1713,6 +1714,18 @@ app.get("/settings/:id", async (req, res) => {
             <span class="thumb"></span>
           </label>
         </div>
+      </div>
+
+      <div class="section">
+        <h2 id="follow-ups">Follow-ups</h2>
+        <p class="section-help">
+          After you send a message with no reply back, it gets flagged "to follow up" once
+          this many days have passed — so conversations waiting on someone else don't
+          silently drop off your radar.
+        </p>
+        <input type="number" name="follow_up_days" value="${account.follow_up_days ?? 3}" min="1" max="30"
+          style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; width:70px;" />
+        <span style="color:var(--ink-soft);">days</span>
       </div>
 
       <div class="section">
@@ -2013,8 +2026,9 @@ app.post("/settings/:id", async (req, res) => {
          timezone = $5, work_start_hour = $6, work_end_hour = $7, notice_hours = $8,
          scheduling_days_ahead = $9, auto_calendar_events = $10,
          move_urgent = $11, move_fyi = $12, move_marketing = $13, move_notifications = $14,
-         move_invoices = $15, auto_draft_replies = $16, no_label_senders = $17, category_rules = $18
-     WHERE id = $19`,
+         move_invoices = $15, auto_draft_replies = $16, no_label_senders = $17, category_rules = $18,
+         follow_up_days = $19
+     WHERE id = $20`,
     [
       req.body.custom_instructions ?? "",
       req.body.tone_instructions ?? "",
@@ -2034,6 +2048,7 @@ app.post("/settings/:id", async (req, res) => {
       !!req.body.auto_draft_replies,
       req.body.no_label_senders ?? "",
       req.body.category_rules ?? "",
+      Number(req.body.follow_up_days) || 3,
       req.params.id,
     ]
   );
