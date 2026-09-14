@@ -435,7 +435,8 @@ app.get("/", async (req, res) => {
   const { rows: priorities } = selectedAccountIds.length
     ? await pool.query(
         `SELECT pm.id, pm.subject, pm.from_address, pm.snippet, pm.web_link, pm.pinned, pm.draft_created,
-                a.email AS account_email, a.provider AS account_provider
+                pm.processed_at, a.email AS account_email, a.provider AS account_provider,
+                a.timezone AS account_timezone
          FROM processed_messages pm
          JOIN accounts a ON a.id = pm.account_id
          WHERE pm.label = 'urgent' AND pm.done = $1 AND pm.account_id = ANY($2)
@@ -496,7 +497,7 @@ app.get("/", async (req, res) => {
               <span class="priority-subject">${escapeHtml(p.subject) || "(no subject)"}</span>
               ${p.pinned ? `<span class="pin-badge">Pinned</span>` : ""}
             </div>
-            <div class="priority-meta">${escapeHtml(p.from_address)} · ${escapeHtml(p.account_email)}</div>
+            <div class="priority-meta">${escapeHtml(p.from_address)} · ${escapeHtml(p.account_email)} · ${new Date(p.processed_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: p.account_timezone || "America/New_York" })}</div>
             ${p.snippet ? `<div class="priority-snippet">${escapeHtml(p.snippet)}</div>` : ""}
           </div>
           <div class="priority-actions">
