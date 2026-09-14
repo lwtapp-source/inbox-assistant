@@ -432,6 +432,18 @@ app.get("/", async (req, res) => {
     selectedAccountIds = allAccountIds;
   }
 
+  const PAGE_SIZE = 50;
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const offset = (page - 1) * PAGE_SIZE;
+
+  const VALID_SORTS = ["pinned", "newest", "oldest"];
+  const defaultSort = showDone ? "newest" : "pinned";
+  const sort = VALID_SORTS.includes(req.query.sort) ? req.query.sort : defaultSort;
+  const orderBy =
+    sort === "newest" ? "pm.processed_at DESC" :
+    sort === "oldest" ? "pm.processed_at ASC" :
+    "pm.pinned DESC, pm.processed_at DESC"; // "pinned"
+
   const { rows: priorities } = selectedAccountIds.length
     ? await pool.query(
         `SELECT pm.id, pm.subject, pm.from_address, pm.snippet, pm.web_link, pm.pinned, pm.draft_created,
@@ -440,11 +452,39 @@ app.get("/", async (req, res) => {
          FROM processed_messages pm
          JOIN accounts a ON a.id = pm.account_id
          WHERE pm.label = 'urgent' AND pm.done = $1 AND pm.account_id = ANY($2)
-         ORDER BY ${showDone ? "pm.processed_at DESC" : "pm.pinned DESC, pm.processed_at DESC"}
-         LIMIT 50`,
-        [showDone, selectedAccountIds]
+         ORDER BY ${orderBy}
+         LIMIT $3 OFFSET $4`,
+        [showDone, selectedAccountIds, PAGE_SIZE, offset]
       )
     : { rows: [] };
+
+  const {
+    rows: [{ count: totalCount }],
+  } = selectedAccountIds.length
+    ? await pool.query(
+        `SELECT COUNT(*)::int AS count
+         FROM processed_messages pm
+         WHERE pm.label = 'urgent' AND pm.done = $1 AND pm.account_id = ANY($2)`,
+        [showDone, selectedAccountIds]
+      )
+    : { rows: [{ count: 0 }] };
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const rangeStart = totalCount === 0 ? 0 : offset + 1;
+  const rangeEnd = Math.min(offset + PAGE_SIZE, totalCount);
+
+  function buildListUrl(targetPage) {
+    const params = new URLSearchParams();
+    if (showDone) params.set("view", "done");
+    if (req.query.filtered) {
+      params.set("filtered", "1");
+      for (const id of selectedAccountIds) params.append("accounts", String(id));
+    }
+    if (sort !== defaultSort) params.set("sort", sort);
+    if (targetPage > 1) params.set("page", String(targetPage));
+    const qs = params.toString();
+    return qs ? `/?${qs}` : "/";
+  }
 
   // Unified dashboard: small at-a-glance widgets for the other sections, so the
   // home page doesn't require clicking into Meetings/Invoices just to see whether
@@ -606,25 +646,52 @@ app.get("/", async (req, res) => {
 
     <p class="keyboard-hint"><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>d</kbd> ${showDone ? "undo" : "done"} · ${showDone ? "" : "<kbd>p</kbd> pin · "}<kbd>x</kbd> delete · <kbd>enter</kbd> open</p>
 
-    ${
-      accounts.length > 1
-        ? `<form method="GET" action="/" id="account-filter-form" style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:18px;">
-             <input type="hidden" name="filtered" value="1" />
-             ${showDone ? `<input type="hidden" name="view" value="done" />` : ""}
-             ${accounts
-               .map(
-                 (a) => `
-               <label style="display:flex; align-items:center; gap:6px; font-size:13.5px; cursor:pointer;">
-                 <input type="checkbox" name="accounts" value="${a.id}" ${
-                   selectedAccountIds.includes(a.id) ? "checked" : ""
-                 } onchange="document.getElementById('account-filter-form').submit()" />
-                 <span class="account-dot ${a.provider}"></span>${escapeHtml(a.email)}
-               </label>`
-               )
-               .join("")}
-           </form>`
-        : ""
-    }
+    <form method="GET" action="/" id="account-filter-form" style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:14px;">
+      <input type="hidden" name="filtered" value="1" />
+      ${showDone ? `<input type="hidden" name="view" value="done" />` : ""}
+      <label style="display:flex; align-items:center; gap:6px; font-size:13.5px;">
+        Sort:
+        <select name="sort" onchange="document.getElementById('account-filter-form').submit()"
+          style="padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:13.5px;">
+          ${!showDone ? `<option value="pinned" ${sort === "pinned" ? "selected" : ""}>Pinned first</option>` : ""}
+          <option value="newest" ${sort === "newest" ? "selected" : ""}>Newest first</option>
+          <option value="oldest" ${sort === "oldest" ? "selected" : ""}>Oldest first</option>
+        </select>
+      </label>
+      ${
+        accounts.length > 1
+          ? accounts
+              .map(
+                (a) => `
+             <label style="display:flex; align-items:center; gap:6px; font-size:13.5px; cursor:pointer;">
+               <input type="checkbox" name="accounts" value="${a.id}" ${
+                 selectedAccountIds.includes(a.id) ? "checked" : ""
+               } onchange="document.getElementById('account-filter-form').submit()" />
+               <span class="account-dot ${a.provider}"></span>${escapeHtml(a.email)}
+             </label>`
+              )
+              .join("")
+          : accounts.map((a) => `<input type="hidden" name="accounts" value="${a.id}" />`).join("")
+      }
+    </form>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+      <span class="section-help" style="margin:0;">
+        ${totalCount === 0 ? "" : `Showing ${rangeStart}-${rangeEnd} of ${totalCount}`}
+      </span>
+      <div style="display:flex; gap:16px; align-items:center;">
+        ${
+          page > 1
+            ? `<a href="${buildListUrl(page - 1)}">← Previous 50</a>`
+            : `<span class="section-help" style="margin:0; opacity:0.4;">← Previous 50</span>`
+        }
+        ${
+          page < totalPages
+            ? `<a href="${buildListUrl(page + 1)}">Next 50 →</a>`
+            : `<span class="section-help" style="margin:0; opacity:0.4;">Next 50 →</span>`
+        }
+      </div>
+    </div>
 
     <div class="priority-list">${priorityRows}</div>
 
