@@ -711,7 +711,7 @@ app.post("/priorities/:id/draft", async (req, res) => {
 app.get("/meetings", async (req, res) => {
   const accounts = await getAccounts();
   const { rows: meetings } = await pool.query(
-    `SELECT m.*, a.email AS account_email
+    `SELECT m.*, a.email AS account_email, a.timezone AS account_timezone
      FROM meetings m
      JOIN accounts a ON a.id = m.account_id
      ORDER BY m.started_at DESC
@@ -767,7 +767,7 @@ app.get("/meetings", async (req, res) => {
               <span class="priority-subject">${escapeHtml(m.title) || "(untitled meeting)"}</span>
               <span class="pin-badge" style="${m.status === "done" ? "background:var(--accent-wash); color:var(--accent-dark);" : m.status === "failed" ? "" : "background:var(--surface); color:var(--ink-soft);"}">${statusLabel[m.status] || m.status}</span>
             </div>
-            <div class="priority-meta">${escapeHtml(m.account_email)} · ${new Date(m.started_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</div>
+            <div class="priority-meta">${escapeHtml(m.account_email)} · ${new Date(m.started_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: m.account_timezone || "America/New_York" })}</div>
             ${m.status === "done" ? `<div class="priority-snippet" style="white-space:pre-wrap;">${escapeHtml(m.summary)}</div>${actionItemsHtml}` : ""}
           </div>
           <div class="priority-actions">
