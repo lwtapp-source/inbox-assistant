@@ -348,8 +348,12 @@ export async function getBusyEvents(account, timeMin, timeMax) {
   const data = await graphFetch(account, `/me/calendarView?${params}`, {
     headers: { Prefer: 'outlook.timezone="UTC"' },
   });
+  // "workingElsewhere" counts as available, same as "free" — only busy/tentative/oof
+  // actually block a proposed time. Graph auto-sets showAs to "free" on a declined or
+  // canceled event, so those are already correctly excluded without special-casing them.
+  const AVAILABLE_STATUSES = new Set(["free", "workingElsewhere"]);
   return (data.value ?? [])
-    .filter((e) => e.showAs && e.showAs !== "free")
+    .filter((e) => e.showAs && !AVAILABLE_STATUSES.has(e.showAs))
     .map((e) => ({ start: e.start?.dateTime + "Z", end: e.end?.dateTime + "Z" }));
 }
 
