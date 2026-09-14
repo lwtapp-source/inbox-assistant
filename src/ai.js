@@ -402,9 +402,18 @@ Preview: ${snippet}`,
 
 // ---------- Meeting summarization ----------
 
+// Style presets for summarizeMeeting — "executive" matches Fyxer's default; "chronological"
+// matches their time-ordered alternative. Sales/custom-template presets aren't offered
+// here since they don't fit a personal/small-practice use case.
+const SUMMARY_STYLE_INSTRUCTIONS = {
+  executive: "a 3-6 sentence plain-English summary of what was discussed and decided, as a high-level overview",
+  chronological: "a time-ordered walkthrough of the topics discussed, in the order they came up, noting decisions as they happened",
+};
+
 // Turns a raw meeting transcript into a short summary and a list of action items.
 // A genuine synthesis task — stays on the full-capability model, not the fast one.
-export async function summarizeMeeting(transcript) {
+export async function summarizeMeeting(transcript, style = "executive") {
+  const styleInstruction = SUMMARY_STYLE_INSTRUCTIONS[style] || SUMMARY_STYLE_INSTRUCTIONS.executive;
   const msg = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 1000,
@@ -413,7 +422,7 @@ export async function summarizeMeeting(transcript) {
         role: "user",
         content: `Summarize this meeting transcript. Reply with JSON only, no commentary,
 no markdown fences:
-{"summary": "<3-6 sentence plain-English summary of what was discussed and decided>", "actionItems": ["<action item 1>", "<action item 2>", ...]}
+{"summary": "<${styleInstruction}>", "actionItems": ["<action item 1>", "<action item 2>", ...]}
 
 Only include real action items that were actually discussed — an empty array is fine if
 none were.
@@ -434,4 +443,23 @@ ${transcript}`,
   } catch {
     return { summary: "", actionItems: [] };
   }
+}
+
+// Translates a meeting summary into another language on request — not run automatically,
+// only when the user asks for a specific language.
+export async function translateText(text, targetLanguage) {
+  const msg = await anthropic.messages.create({
+    model: FAST_MODEL,
+    max_tokens: 1000,
+    messages: [
+      {
+        role: "user",
+        content: `Translate the following text into ${targetLanguage}. Reply with only the
+translated text, no commentary, no quotation marks around it:
+
+${text}`,
+      },
+    ],
+  });
+  return msg.content[0]?.text ?? "";
 }

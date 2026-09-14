@@ -28,6 +28,8 @@ import {
   extractDraftRequest,
   answerFromSearch,
   draftFromScratch,
+  summarizeMeeting,
+  translateText,
 } from "./src/ai.js";
 import * as gmailProvider from "./src/providers/gmail.js";
 import * as outlookProvider from "./src/providers/outlook.js";
@@ -835,6 +837,15 @@ app.post("/priorities/:id/draft", async (req, res) => {
 
 // ---------- Meetings (AI notetaker) ----------
 
+const MEETING_STATUS_LABEL = {
+  joining: "Joining…",
+  recording: "Recording…",
+  in_call_recording: "Recording…",
+  in_waiting_room: "Waiting to be let in…",
+  done: "Done",
+  failed: "Failed",
+};
+
 app.get("/meetings", async (req, res) => {
   const accounts = await getAccounts();
   const { rows: meetings } = await pool.query(
@@ -857,14 +868,7 @@ app.get("/meetings", async (req, res) => {
     (actionItemsByMeeting[item.meeting_id] ??= []).push(item);
   }
 
-  const statusLabel = {
-    joining: "Joining…",
-    recording: "Recording…",
-    in_call_recording: "Recording…",
-    in_waiting_room: "Waiting to be let in…",
-    done: "Done",
-    failed: "Failed",
-  };
+  const statusLabel = MEETING_STATUS_LABEL;
 
   const meetingRows = meetings.length
     ? meetings
@@ -898,6 +902,7 @@ app.get("/meetings", async (req, res) => {
             ${m.status === "done" ? `<div class="priority-snippet" style="white-space:pre-wrap;">${escapeHtml(m.summary)}</div>${actionItemsHtml}` : ""}
           </div>
           <div class="priority-actions">
+            ${m.status === "done" ? `<a href="/meetings/${m.id}">Open</a>` : ""}
             <form method="POST" action="/meetings/${m.id}/delete" style="display:inline;">
               <button type="submit" class="link-button danger">Delete</button>
             </form>
@@ -1089,6 +1094,240 @@ app.post("/meetings/action-items/:id/toggle", async (req, res) => {
     req.params.id,
   ]);
   res.sendStatus(200);
+});
+
+app.get("/meetings/:id", async (req, res) => {
+  const accounts = await getAccounts();
+  const { rows } = await pool.query(
+    `SELECT m.*, a.email AS account_email, a.timezone AS account_timezone
+     FROM meetings m
+     JOIN accounts a ON a.id = m.account_id
+     WHERE m.id = $1`,
+    [req.params.id]
+  );
+  const meeting = rows[0];
+  if (!meeting) {
+    return res
+      .status(404)
+      .send(await renderLayout({ title: "Not found", activeAccountId: null, accounts, body: "<h1>Meeting not found</h1>" }));
+  }
+
+  const { rows: actionItems } = await pool.query(
+    `SELECT * FROM meeting_action_items WHERE meeting_id = $1 ORDER BY id ASC`,
+    [meeting.id]
+  );
+
+  const actionItemsHtml = actionItems.length
+    ? actionItems
+        .map(
+          (item) => `
+        <label style="display:flex; align-items:flex-start; gap:8px; font-size:13.5px; padding:4px 0; cursor:pointer; ${item.done ? "color:var(--ink-faint); text-decoration:line-through;" : ""}">
+          <input type="checkbox" class="action-item-checkbox" data-url="/meetings/action-items/${item.id}/toggle" ${item.done ? "checked" : ""} style="margin-top:3px;" />
+          ${escapeHtml(item.text)}
+        </label>`
+        )
+        .join("")
+    : `<p class="section-help" style="margin:0;">No action items.</p>`;
+
+  const dateStr = new Date(meeting.started_at).toLocaleString("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: meeting.account_timezone || "America/New_York",
+  });
+
+  const notDoneBody = `
+    <a href="/meetings" class="eyebrow-link">← All meetings</a>
+    <h1>${escapeHtml(meeting.title) || "(untitled meeting)"}</h1>
+    <p class="subtitle">${escapeHtml(meeting.account_email)} · ${dateStr} · ${MEETING_STATUS_LABEL[meeting.status] || meeting.status}</p>
+    <div class="empty-state">Still processing — check back in a bit.</div>
+  `;
+
+  const doneBody = `
+    <a href="/meetings" class="eyebrow-link">← All meetings</a>
+    <h1>${escapeHtml(meeting.title) || "(untitled meeting)"}</h1>
+    <p class="subtitle">${escapeHtml(meeting.account_email)} · ${dateStr} · ${MEETING_STATUS_LABEL[meeting.status] || meeting.status}</p>
+
+    ${req.query.saved ? `<div class="saved-banner">Saved</div><br/>` : ""}
+    ${req.query.error ? `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">${escapeHtml(req.query.error)}</div><br/>` : ""}
+
+    <div class="section">
+      <h2>Summary</h2>
+      <form method="POST" action="/meetings/${meeting.id}/regenerate" style="display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
+        <select name="style" style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
+          <option value="executive">Executive (high-level overview)</option>
+          <option value="chronological">Chronological (time-ordered)</option>
+        </select>
+        <button type="submit">Regenerate from transcript</button>
+        <button type="button" class="link-button" id="copy-summary-btn">Copy</button>
+        <a href="/meetings/${meeting.id}/summary.txt">Download</a>
+      </form>
+      <form method="POST" action="/meetings/${meeting.id}/summary">
+        <textarea name="summary" id="summary-text" rows="6">${escapeHtml(meeting.summary)}</textarea>
+        <div style="margin-top:8px;"><button type="submit">Save summary</button></div>
+      </form>
+    </div>
+
+    <div class="section">
+      <h2>Translate</h2>
+      <form method="POST" action="/meetings/${meeting.id}/translate" style="display:flex; gap:8px; align-items:center;">
+        <input type="text" name="language" placeholder="e.g. Spanish" required
+          style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;" />
+        <button type="submit">Translate summary</button>
+      </form>
+      ${
+        meeting.summary_translated
+          ? `<div style="margin-top:12px;">
+               <div class="priority-meta" style="margin-bottom:6px;">${escapeHtml(meeting.summary_translated_language)}</div>
+               <p style="white-space:pre-wrap; border:1px solid var(--border); border-radius:var(--radius); padding:14px; background:var(--surface);">${escapeHtml(meeting.summary_translated)}</p>
+             </div>`
+          : ""
+      }
+    </div>
+
+    <div class="section">
+      <h2>Action items</h2>
+      ${actionItemsHtml}
+    </div>
+
+    <div class="section">
+      <h2>Transcript</h2>
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <button type="button" class="link-button" id="copy-transcript-btn">Copy</button>
+        <a href="/meetings/${meeting.id}/transcript.txt">Download</a>
+      </div>
+      <form method="POST" action="/meetings/${meeting.id}/transcript">
+        <textarea name="transcript" id="transcript-text" rows="14">${escapeHtml(meeting.transcript)}</textarea>
+        <p class="section-help" style="margin-top:8px;">
+          Editing this updates what future "Regenerate from transcript" runs work from.
+        </p>
+        <button type="submit">Save transcript</button>
+      </form>
+    </div>
+
+    <script>
+      document.getElementById("copy-summary-btn")?.addEventListener("click", function () {
+        navigator.clipboard.writeText(document.getElementById("summary-text").value);
+        this.textContent = "Copied!";
+        setTimeout(() => { this.textContent = "Copy"; }, 1500);
+      });
+      document.getElementById("copy-transcript-btn")?.addEventListener("click", function () {
+        navigator.clipboard.writeText(document.getElementById("transcript-text").value);
+        this.textContent = "Copied!";
+        setTimeout(() => { this.textContent = "Copy"; }, 1500);
+      });
+      document.querySelectorAll(".action-item-checkbox").forEach(function (box) {
+        box.addEventListener("change", async function () {
+          box.disabled = true;
+          try {
+            var res = await fetch(box.dataset.url, { method: "POST" });
+            if (!res.ok) throw new Error("failed");
+            window.location.reload();
+          } catch (err) {
+            box.checked = !box.checked;
+            box.disabled = false;
+            alert("Couldn't update that — please try again.");
+          }
+        });
+      });
+    </script>
+  `;
+
+  res.send(
+    await renderLayout({
+      title: meeting.title || "Meeting",
+      activeAccountId: null,
+      accounts,
+      body: meeting.status === "done" ? doneBody : notDoneBody,
+      activePage: "meetings",
+    })
+  );
+});
+
+app.post("/meetings/:id/transcript", async (req, res) => {
+  await pool.query(`UPDATE meetings SET transcript = $1 WHERE id = $2`, [
+    req.body.transcript ?? "",
+    req.params.id,
+  ]);
+  res.redirect(`/meetings/${req.params.id}?saved=1`);
+});
+
+app.post("/meetings/:id/summary", async (req, res) => {
+  await pool.query(`UPDATE meetings SET summary = $1 WHERE id = $2`, [
+    req.body.summary ?? "",
+    req.params.id,
+  ]);
+  res.redirect(`/meetings/${req.params.id}?saved=1`);
+});
+
+app.post("/meetings/:id/regenerate", async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT transcript FROM meetings WHERE id = $1`, [
+      req.params.id,
+    ]);
+    const transcript = rows[0]?.transcript;
+    if (!transcript?.trim()) return res.redirect(`/meetings/${req.params.id}`);
+
+    const style = req.body.style === "chronological" ? "chronological" : "executive";
+    const { summary, actionItems } = await summarizeMeeting(transcript, style);
+
+    await pool.query(`UPDATE meetings SET summary = $1 WHERE id = $2`, [summary, req.params.id]);
+    await pool.query(`DELETE FROM meeting_action_items WHERE meeting_id = $1`, [req.params.id]);
+    for (const item of actionItems) {
+      await pool.query(`INSERT INTO meeting_action_items (meeting_id, text) VALUES ($1, $2)`, [
+        req.params.id,
+        item,
+      ]);
+    }
+    res.redirect(`/meetings/${req.params.id}?saved=1`);
+  } catch (err) {
+    console.error("Meeting regenerate failed:", err.message);
+    res.redirect(`/meetings/${req.params.id}?error=${encodeURIComponent("Couldn't regenerate the summary — please try again.")}`);
+  }
+});
+
+app.post("/meetings/:id/translate", async (req, res) => {
+  const language = req.body.language?.trim();
+  if (!language) return res.redirect(`/meetings/${req.params.id}`);
+
+  try {
+    const { rows } = await pool.query(`SELECT summary FROM meetings WHERE id = $1`, [
+      req.params.id,
+    ]);
+    const summary = rows[0]?.summary;
+    if (!summary?.trim()) return res.redirect(`/meetings/${req.params.id}`);
+
+    const translated = await translateText(summary, language);
+    await pool.query(
+      `UPDATE meetings SET summary_translated = $1, summary_translated_language = $2 WHERE id = $3`,
+      [translated, language, req.params.id]
+    );
+    res.redirect(`/meetings/${req.params.id}`);
+  } catch (err) {
+    console.error("Meeting translate failed:", err.message);
+    res.redirect(`/meetings/${req.params.id}?error=${encodeURIComponent("Couldn't translate the summary — please try again.")}`);
+  }
+});
+
+app.get("/meetings/:id/summary.txt", async (req, res) => {
+  const { rows } = await pool.query(`SELECT title, summary FROM meetings WHERE id = $1`, [
+    req.params.id,
+  ]);
+  const meeting = rows[0];
+  if (!meeting) return res.status(404).send("Not found");
+  res.setHeader("Content-Disposition", `attachment; filename="${(meeting.title || "meeting").replace(/[^a-z0-9]+/gi, "-")}-summary.txt"`);
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.send(meeting.summary || "");
+});
+
+app.get("/meetings/:id/transcript.txt", async (req, res) => {
+  const { rows } = await pool.query(`SELECT title, transcript FROM meetings WHERE id = $1`, [
+    req.params.id,
+  ]);
+  const meeting = rows[0];
+  if (!meeting) return res.status(404).send("Not found");
+  res.setHeader("Content-Disposition", `attachment; filename="${(meeting.title || "meeting").replace(/[^a-z0-9]+/gi, "-")}-transcript.txt"`);
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.send(meeting.transcript || "");
 });
 
 // ---------- Invoices ----------

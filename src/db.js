@@ -214,6 +214,13 @@ export async function initSchema() {
     console.error("Could not add in-person recording columns to meetings (non-fatal):", err.message);
   }
 
+  try {
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS summary_translated TEXT;`);
+    await pool.query(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS summary_translated_language TEXT;`);
+  } catch (err) {
+    console.error("Could not add translation columns to meetings (non-fatal):", err.message);
+  }
+
   // One-time cleanup (safe to run every startup — a no-op once caught up): Outlook
   // message IDs used to change when a message moved between folders, which made the
   // poller treat an already-processed email as brand new. Now fixed by requesting
