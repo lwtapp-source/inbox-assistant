@@ -30,6 +30,8 @@ export async function initSchema() {
       custom_instructions TEXT,         -- free-text triage rules, folded into the classification prompt
       tone_instructions TEXT,           -- free-text writing-style guidance, folded into the drafting prompt
       always_draft_senders TEXT,        -- newline/comma-separated emails or domains that always get a draft
+      no_label_senders TEXT,            -- newline/comma-separated emails or domains — skip AI categorization & drafting entirely
+      category_rules TEXT,              -- one rule per line, "pattern => category" — see ALTER statement below for format
       auto_draft_replies BOOLEAN DEFAULT true, -- if false, urgent mail waits for a manual "Draft reply" click instead
       signature TEXT,                   -- plain-text signature appended to every generated draft
       learned_style_notes TEXT,         -- auto-updated notes from comparing drafts to what was actually sent
@@ -52,6 +54,13 @@ export async function initSchema() {
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS custom_instructions TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS tone_instructions TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS always_draft_senders TEXT;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS no_label_senders TEXT;
+    -- newline/comma-separated emails or domains — skip AI categorization & drafting entirely
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS category_rules TEXT;
+    -- one rule per line: "pattern => category", e.g.
+    --   billing@vendor.com => invoices
+    --   @newsletter.com => marketing
+    -- checked specific-email-first, then domain (matches Fyxer's stated priority order)
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS auto_draft_replies BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS signature TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS learned_style_notes TEXT;

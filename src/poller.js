@@ -72,6 +72,51 @@ function isAlwaysDraftSender(fromHeader, alwaysDraftSenders) {
   return entries.some((entry) => from.includes(entry));
 }
 
+// account.no_label_senders is a newline/comma-separated list of emails or domains — mail
+// from these senders skips classification and drafting entirely (matched the same way as
+// always_draft_senders above, for consistency).
+function isNoLabelSender(fromHeader, noLabelSenders) {
+  if (!noLabelSenders?.trim() || !fromHeader) return false;
+  const from = fromHeader.toLowerCase();
+  const entries = noLabelSenders
+    .split(/[\n,]/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return entries.some((entry) => from.includes(entry));
+}
+
+function extractEmailAddress(fromHeader) {
+  if (!fromHeader) return "";
+  const match = fromHeader.match(/<([^>]+)>/);
+  return (match ? match[1] : fromHeader).trim().toLowerCase();
+}
+
+// account.category_rules is one rule per line, "pattern => category". A pattern that's a
+// full email address is an exact match against the sender; a pattern starting with "@" is
+// a domain match. Exact-email rules are checked before domain rules regardless of line
+// order, matching Fyxer's stated priority (specific contact rules beat domain rules).
+function matchCategoryRule(fromHeader, categoryRules) {
+  if (!categoryRules?.trim() || !fromHeader) return null;
+
+  const rules = categoryRules
+    .split("\n")
+    .map((line) => {
+      const [pattern, category] = line.split("=>").map((s) => s?.trim().toLowerCase());
+      return pattern && category ? { pattern, category } : null;
+    })
+    .filter(Boolean);
+  if (!rules.length) return null;
+
+  const email = extractEmailAddress(fromHeader);
+  const domain = email.split("@")[1] || "";
+
+  const exact = rules.find((r) => !r.pattern.startsWith("@") && r.pattern === email);
+  if (exact) return exact.category;
+
+  const domainRule = rules.find((r) => r.pattern.startsWith("@") && r.pattern.slice(1) === domain);
+  return domainRule ? domainRule.category : null;
+}
+
 // Generates a reply draft and creates it in the provider — shared by automatic drafting
 // (poller, when auto_draft_replies is on) and the manual "Draft reply" button (Top
 // Priorities, when it's off). Returns the created draft info.
@@ -136,15 +181,29 @@ export async function pollAccount(account) {
 
     const detail = await provider.getMessageDetail(account, id);
 
+    if (isNoLabelSender(detail.from, account.no_label_senders)) {
+      await pool.query(
+        `INSERT INTO processed_messages
+           (account_id, message_id, label, draft_created, subject, from_address, snippet, web_link)
+         VALUES ($1, $2, NULL, false, $3, $4, $5, $6)`,
+        [account.id, id, detail.subject ?? "", detail.from ?? "", detail.snippet ?? "", detail.webLink ?? ""]
+      );
+      handled++;
+      continue;
+    }
+
     const timezone = account.timezone || "America/New_York";
-    const classifyResult = await classifyEmail({
-      subject: detail.subject,
-      from: detail.from,
-      snippet: detail.snippet,
-      customInstructions: account.custom_instructions,
-      referenceDate: todayInZone(timezone),
-      timezone,
-    });
+    const ruleCategory = matchCategoryRule(detail.from, account.category_rules);
+    const classifyResult = ruleCategory
+      ? { label: ruleCategory, appointment: null }
+      : await classifyEmail({
+          subject: detail.subject,
+          from: detail.from,
+          snippet: detail.snippet,
+          customInstructions: account.custom_instructions,
+          referenceDate: todayInZone(timezone),
+          timezone,
+        });
     const label = classifyResult.label;
 
     await provider.applyLabel(account, id, label);

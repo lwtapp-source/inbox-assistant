@@ -1562,7 +1562,8 @@ const CATEGORIES = [
 app.get("/settings/:id", async (req, res) => {
   const accounts = await getAccounts();
   const { rows } = await pool.query(
-    `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders, signature,
+    `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders,
+            no_label_senders, category_rules, signature,
             learned_style_notes, timezone, work_start_hour, work_end_hour, notice_hours,
             scheduling_days_ahead, auto_calendar_events, active, auto_draft_replies,
             move_urgent, move_fyi, move_marketing, move_notifications, move_invoices
@@ -1636,6 +1637,7 @@ app.get("/settings/:id", async (req, res) => {
 
     <nav class="settings-jump-nav">
       <a href="#triage-rules">Triage</a>
+      <a href="#sender-rules">Sender rules</a>
       <a href="#category-routing">Routing</a>
       <a href="#writing-tone">Tone</a>
       <a href="#auto-draft">Auto-draft</a>
@@ -1658,6 +1660,30 @@ app.get("/settings/:id", async (req, res) => {
           marketing are always marketing. Anything mentioning an invoice is fyi."
         </p>
         <textarea name="custom_instructions" rows="6">${escapeHtml(account.custom_instructions)}</textarea>
+      </div>
+
+      <div class="section">
+        <h2 id="sender-rules">Sender rules</h2>
+        <p class="section-help">
+          Deterministic overrides, checked before the triage rules above and applied without
+          an AI call — for when you already know exactly how a sender should be handled.
+        </p>
+
+        <h2 style="font-size:14px; margin-top:18px;">Categorize by sender</h2>
+        <p class="section-help">
+          One rule per line: <code>pattern =&gt; category</code>, e.g.
+          <code>billing@vendor.com =&gt; invoices</code> or <code>@newsletter.com =&gt; marketing</code>.
+          A full email address is checked first; a <code>@domain.com</code> pattern is checked
+          only if no exact address matched — same priority order as Fyxer.
+        </p>
+        <textarea name="category_rules" rows="4">${escapeHtml(account.category_rules)}</textarea>
+
+        <h2 style="font-size:14px; margin-top:18px;">Skip AI entirely for these senders</h2>
+        <p class="section-help">
+          One email or domain per line. Mail from these senders is left completely alone — no
+          classification, no label, no draft.
+        </p>
+        <textarea name="no_label_senders" rows="4">${escapeHtml(account.no_label_senders)}</textarea>
       </div>
 
       <div class="section">
@@ -1987,8 +2013,8 @@ app.post("/settings/:id", async (req, res) => {
          timezone = $5, work_start_hour = $6, work_end_hour = $7, notice_hours = $8,
          scheduling_days_ahead = $9, auto_calendar_events = $10,
          move_urgent = $11, move_fyi = $12, move_marketing = $13, move_notifications = $14,
-         move_invoices = $15, auto_draft_replies = $16
-     WHERE id = $17`,
+         move_invoices = $15, auto_draft_replies = $16, no_label_senders = $17, category_rules = $18
+     WHERE id = $19`,
     [
       req.body.custom_instructions ?? "",
       req.body.tone_instructions ?? "",
@@ -2006,6 +2032,8 @@ app.post("/settings/:id", async (req, res) => {
       !!req.body.move_notifications,
       !!req.body.move_invoices,
       !!req.body.auto_draft_replies,
+      req.body.no_label_senders ?? "",
+      req.body.category_rules ?? "",
       req.params.id,
     ]
   );
