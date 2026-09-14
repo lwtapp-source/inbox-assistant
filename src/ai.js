@@ -114,6 +114,7 @@ export async function draftReply({
   threadContext,
   toneInstructions,
   filesContext,
+  meetingContext,
   learnedStyleNotes,
   availabilityContext,
 }) {
@@ -147,7 +148,7 @@ time, so naturally propose 2-3 of these as options (you don't need to list them 
 
 VOICE PROFILE:
 ${voiceProfile || "No profile yet — use a neutral, professional tone."}
-${toneBlock}${learnedBlock}${availabilityBlock}${threadBlock}${filesContext || ""}
+${toneBlock}${learnedBlock}${availabilityBlock}${threadBlock}${filesContext || ""}${meetingContext || ""}
 EMAIL TO REPLY TO:
 From: ${incomingEmail.from}
 Subject: ${incomingEmail.subject}

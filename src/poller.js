@@ -2,6 +2,7 @@ import { pool } from "./db.js";
 import { classifyEmail, draftReply, buildVoiceProfile, needsScheduling, extractInvoiceDetails } from "./ai.js";
 import { getPdfAttachmentText } from "./pdfAttachments.js";
 import { getCustomFilesContext } from "./customFiles.js";
+import { getRecentMeetingsContext } from "./meetingContext.js";
 import { getAvailability, formatAvailabilityWindows } from "./scheduling.js";
 import { createAppointmentEvent } from "./appointments.js";
 import { indexMessage } from "./semanticSearch.js";
@@ -151,6 +152,7 @@ export async function generateAndCreateDraft(account, provider, detail) {
     threadContext,
     toneInstructions: account.tone_instructions,
     filesContext: await getCustomFilesContext(account.id),
+    meetingContext: await getRecentMeetingsContext(account.id),
     learnedStyleNotes: account.learned_style_notes,
     availabilityContext,
   });
