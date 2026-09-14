@@ -32,6 +32,7 @@ export async function initSchema() {
       always_draft_senders TEXT,        -- newline/comma-separated emails or domains that always get a draft
       no_label_senders TEXT,            -- newline/comma-separated emails or domains — skip AI categorization & drafting entirely
       category_rules TEXT,              -- one rule per line, "pattern => category" — see ALTER statement below for format
+      custom_vocabulary TEXT,           -- newline/comma-separated names/acronyms/jargon to boost meeting-transcript accuracy
       auto_draft_replies BOOLEAN DEFAULT true, -- if false, urgent mail waits for a manual "Draft reply" click instead
       signature TEXT,                   -- plain-text signature appended to every generated draft
       learned_style_notes TEXT,         -- auto-updated notes from comparing drafts to what was actually sent
@@ -62,6 +63,7 @@ export async function initSchema() {
     --   billing@vendor.com => invoices
     --   @newsletter.com => marketing
     -- checked specific-email-first, then domain (matches Fyxer's stated priority order)
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS custom_vocabulary TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS auto_draft_replies BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS signature TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS learned_style_notes TEXT;

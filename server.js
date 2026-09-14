@@ -1055,8 +1055,17 @@ app.post("/meetings/record", uploadAudioFile.single("audio"), async (req, res) =
   try {
     if (!req.file) return res.status(400).json({ ok: false, error: "No audio received" });
 
+    const { rows: accountRows } = await pool.query(
+      `SELECT custom_vocabulary FROM accounts WHERE id = $1`,
+      [account_id]
+    );
+    const keyterms = (accountRows[0]?.custom_vocabulary || "")
+      .split(/[\n,]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
     const uploadUrl = await uploadAudio(req.file.buffer);
-    const transcriptId = await submitTranscription(uploadUrl);
+    const transcriptId = await submitTranscription(uploadUrl, keyterms);
 
     await pool.query(
       `INSERT INTO meetings (account_id, transcript_id, source, title, status)
@@ -1566,7 +1575,7 @@ app.get("/settings/:id", async (req, res) => {
   const accounts = await getAccounts();
   const { rows } = await pool.query(
     `SELECT id, email, provider, custom_instructions, tone_instructions, always_draft_senders,
-            no_label_senders, category_rules, signature,
+            no_label_senders, category_rules, custom_vocabulary, signature,
             learned_style_notes, timezone, work_start_hour, work_end_hour, notice_hours,
             scheduling_days_ahead, follow_up_days, auto_calendar_events, active, auto_draft_replies,
             move_urgent, move_fyi, move_marketing, move_notifications, move_invoices
@@ -1647,6 +1656,7 @@ app.get("/settings/:id", async (req, res) => {
       <a href="#follow-ups">Follow-ups</a>
       <a href="#always-draft">Always draft</a>
       <a href="#signature">Signature</a>
+      <a href="#custom-words">Custom words</a>
       <a href="#scheduling">Scheduling</a>
       <a href="#custom-files">Files</a>
       <a href="#learned-notes">Learned</a>
@@ -1749,6 +1759,16 @@ app.get("/settings/:id", async (req, res) => {
           set it here if you want one included.
         </p>
         <textarea name="signature" rows="4">${escapeHtml(account.signature)}</textarea>
+      </div>
+
+      <div class="section">
+        <h2 id="custom-words">Custom words</h2>
+        <p class="section-help">
+          One name, acronym, or term per line (or comma-separated) — company/product names,
+          team acronyms, industry jargon, anything the meeting notetaker tends to mishear.
+          Used to boost transcription accuracy for in-person recordings.
+        </p>
+        <textarea name="custom_vocabulary" rows="4">${escapeHtml(account.custom_vocabulary)}</textarea>
       </div>
 
       <div class="section">
@@ -2030,8 +2050,8 @@ app.post("/settings/:id", async (req, res) => {
          scheduling_days_ahead = $9, auto_calendar_events = $10,
          move_urgent = $11, move_fyi = $12, move_marketing = $13, move_notifications = $14,
          move_invoices = $15, auto_draft_replies = $16, no_label_senders = $17, category_rules = $18,
-         follow_up_days = $19
-     WHERE id = $20`,
+         follow_up_days = $19, custom_vocabulary = $20
+     WHERE id = $21`,
     [
       req.body.custom_instructions ?? "",
       req.body.tone_instructions ?? "",
@@ -2052,6 +2072,7 @@ app.post("/settings/:id", async (req, res) => {
       req.body.no_label_senders ?? "",
       req.body.category_rules ?? "",
       Number(req.body.follow_up_days) || 3,
+      req.body.custom_vocabulary ?? "",
       req.params.id,
     ]
   );

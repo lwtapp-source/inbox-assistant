@@ -22,12 +22,19 @@ export async function uploadAudio(buffer) {
 }
 
 // Submits an uploaded audio file for transcription with speaker diarization enabled.
+// keyterms boosts recognition of account-specific names/acronyms/jargon that AssemblyAI
+// wouldn't otherwise reliably catch — up to 1000 terms, 6 words per phrase per their docs;
+// not enforced here since going over just means some terms are ignored, not a hard error.
 // Returns the transcript id — transcription happens asynchronously; poll getTranscript.
-export async function submitTranscription(audioUrl) {
+export async function submitTranscription(audioUrl, keyterms = []) {
   const res = await fetch(`${BASE}/transcript`, {
     method: "POST",
     headers: { ...headers(), "Content-Type": "application/json" },
-    body: JSON.stringify({ audio_url: audioUrl, speaker_labels: true }),
+    body: JSON.stringify({
+      audio_url: audioUrl,
+      speaker_labels: true,
+      ...(keyterms.length ? { keyterms_prompt: keyterms } : {}),
+    }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
