@@ -85,17 +85,26 @@ function isNoLabelSender(fromHeader, noLabelSenders) {
   return entries.some((entry) => from.includes(entry));
 }
 
+// Per RFC 5322's name-addr form ("Display Name" <addr>), the real address is always the
+// *last* <...> group — a quoted display name could otherwise embed a fake bracketed
+// address earlier in the header to spoof a rule match, so this deliberately doesn't take
+// the first match.
 function extractEmailAddress(fromHeader) {
   if (!fromHeader) return "";
-  const match = fromHeader.match(/<([^>]+)>/);
-  return (match ? match[1] : fromHeader).trim().toLowerCase();
+  const matches = [...fromHeader.matchAll(/<([^>]+)>/g)];
+  const address = matches.length ? matches[matches.length - 1][1] : fromHeader;
+  return address.trim().toLowerCase();
 }
 
-// account.category_rules is one rule per line, "pattern => category". A pattern that's a
-// full email address is an exact match against the sender; a pattern starting with "@" is
-// a domain match. Exact-email rules are checked before domain rules regardless of line
-// order, matching Fyxer's stated priority (specific contact rules beat domain rules).
-function matchCategoryRule(fromHeader, categoryRules) {
+// Returns a forced category string, or null if no rule matches.
+// Specific email match wins over domain match, per Fyxer's stated priority.
+//
+// Matching is done against the address extracted from the header (extractEmailAddress
+// above), not the raw header text — a display name is attacker-controlled and could
+// otherwise be crafted to contain a rule's pattern as a substring (e.g. a display name
+// literally reading "@newsletter.com" from a sender whose real domain is something
+// else), causing a false match.
+function getCategoryRuleMatch(fromHeader, categoryRules) {
   if (!categoryRules?.trim() || !fromHeader) return null;
 
   const rules = categoryRules
@@ -110,11 +119,11 @@ function matchCategoryRule(fromHeader, categoryRules) {
   const email = extractEmailAddress(fromHeader);
   const domain = email.split("@")[1] || "";
 
-  const exact = rules.find((r) => !r.pattern.startsWith("@") && r.pattern === email);
-  if (exact) return exact.category;
+  const exactMatch = rules.find((r) => !r.pattern.startsWith("@") && r.pattern === email);
+  if (exactMatch) return exactMatch.category;
 
-  const domainRule = rules.find((r) => r.pattern.startsWith("@") && r.pattern.slice(1) === domain);
-  return domainRule ? domainRule.category : null;
+  const domainMatch = rules.find((r) => r.pattern.startsWith("@") && r.pattern.slice(1) === domain);
+  return domainMatch?.category || null;
 }
 
 // Generates a reply draft and creates it in the provider — shared by automatic drafting
@@ -193,7 +202,7 @@ export async function pollAccount(account) {
     }
 
     const timezone = account.timezone || "America/New_York";
-    const ruleCategory = matchCategoryRule(detail.from, account.category_rules);
+    const ruleCategory = getCategoryRuleMatch(detail.from, account.category_rules);
     const classifyResult = ruleCategory
       ? { label: ruleCategory, appointment: null }
       : await classifyEmail({
