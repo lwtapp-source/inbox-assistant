@@ -1958,7 +1958,8 @@ app.get("/settings/:id", async (req, res) => {
             no_label_senders, category_rules, custom_vocabulary, signature,
             learned_style_notes, timezone, work_start_hour, work_end_hour, notice_hours,
             scheduling_days_ahead, follow_up_days, auto_calendar_events, active, auto_draft_replies,
-            move_urgent, move_fyi, move_marketing, move_notifications, move_invoices
+            move_urgent, move_fyi, move_marketing, move_notifications, move_invoices,
+            auto_archive_after_reply
      FROM accounts WHERE id = $1`,
     [req.params.id]
   );
@@ -2204,6 +2205,23 @@ app.get("/settings/:id", async (req, res) => {
           Choose whether each category stays visible in the inbox or moves into its own folder.
         </p>
         ${categoryRows}
+
+        <div class="category-row">
+          <div class="category-label">
+            <div>
+              <div class="category-name">Archive after reply</div>
+              <div class="category-desc">Once you've replied to an urgent message, move it out of the inbox automatically — separate from the toggle above, which only applies when it's first triaged</div>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:12px;">
+            <span class="category-state">${account.auto_archive_after_reply !== false ? "On" : "Off"}</span>
+            <label class="toggle">
+              <input type="checkbox" name="auto_archive_after_reply" ${account.auto_archive_after_reply !== false ? "checked" : ""} data-on="On" data-off="Off" />
+              <span class="track"></span>
+              <span class="thumb"></span>
+            </label>
+          </div>
+        </div>
       </div>
 
       <button type="submit">Save changes</button>
@@ -2430,8 +2448,8 @@ app.post("/settings/:id", async (req, res) => {
          scheduling_days_ahead = $9, auto_calendar_events = $10,
          move_urgent = $11, move_fyi = $12, move_marketing = $13, move_notifications = $14,
          move_invoices = $15, auto_draft_replies = $16, no_label_senders = $17, category_rules = $18,
-         follow_up_days = $19, custom_vocabulary = $20
-     WHERE id = $21`,
+         follow_up_days = $19, custom_vocabulary = $20, auto_archive_after_reply = $21
+     WHERE id = $22`,
     [
       req.body.custom_instructions ?? "",
       req.body.tone_instructions ?? "",
@@ -2453,6 +2471,7 @@ app.post("/settings/:id", async (req, res) => {
       req.body.category_rules ?? "",
       Number(req.body.follow_up_days) || 3,
       req.body.custom_vocabulary ?? "",
+      !!req.body.auto_archive_after_reply,
       req.params.id,
     ]
   );

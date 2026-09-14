@@ -50,6 +50,7 @@ export async function initSchema() {
       move_notifications BOOLEAN DEFAULT true, -- move "notifications"-labeled mail out of the inbox into a folder
       move_invoices BOOLEAN DEFAULT true,      -- move "invoices"-labeled mail out of the inbox into a folder
       move_low_priority BOOLEAN DEFAULT true,  -- legacy column, kept for old data; no longer written to
+      auto_archive_after_reply BOOLEAN DEFAULT true, -- once you've replied to an urgent thread, move it out of the inbox
       created_at TIMESTAMPTZ DEFAULT now()
     );
 
@@ -81,6 +82,7 @@ export async function initSchema() {
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_notifications BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_invoices BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_low_priority BOOLEAN DEFAULT true;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS auto_archive_after_reply BOOLEAN DEFAULT true;
     ALTER TABLE accounts ALTER COLUMN move_fyi SET DEFAULT true;
 
     CREATE TABLE IF NOT EXISTS processed_messages (
