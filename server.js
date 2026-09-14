@@ -141,7 +141,7 @@ function escapeHtml(str) {
     .replace(/'/g, "&#39;");
 }
 
-async function renderLayout({ title, activeAccountId, accounts, body }) {
+async function renderLayout({ title, activeAccountId, accounts, body, activePage }) {
   const { rows: pausedRows } = await pool.query(
     `SELECT COUNT(*)::int AS count FROM accounts WHERE active = false`
   );
@@ -201,9 +201,10 @@ async function renderLayout({ title, activeAccountId, accounts, body }) {
       }
       <nav class="account-nav">
         <div class="nav-label">Tools</div>
-        <a href="/chat" class="account-link">💬 Chat</a>
-        <a href="/invoices" class="account-link">🧾 Invoices</a>
-        <a href="/meetings" class="account-link">🎙️ Meetings</a>
+        <a href="/" class="account-link ${activePage === "priorities" ? "active" : ""}">🗂️ Priorities</a>
+        <a href="/chat" class="account-link ${activePage === "chat" ? "active" : ""}">💬 Chat</a>
+        <a href="/invoices" class="account-link ${activePage === "invoices" ? "active" : ""}">🧾 Invoices</a>
+        <a href="/meetings" class="account-link ${activePage === "meetings" ? "active" : ""}">🎙️ Meetings</a>
       </nav>
       <nav class="account-nav">
         <div class="nav-label">Accounts</div>
@@ -229,6 +230,83 @@ async function renderLayout({ title, activeAccountId, accounts, body }) {
   </div>
 
   <script>
+    // Soft (no full-reload) navigation between pages. Every route still renders a
+    // complete HTML page server-side (so it works with JS disabled and on direct
+    // load); this just swaps <main> + the sidebar in place for same-origin link
+    // clicks instead of letting the browser do a full navigation. Forms are left
+    // alone — several already do their own fetch-based updates (see the priority
+    // actions script below), and double-handling a submit here would double-POST.
+    (function () {
+      var EXCLUDED_PREFIXES = ["/auth/", "/logout", "/login", "/admin/"];
+
+      function runScripts(container) {
+        container.querySelectorAll("script").forEach(function (old) {
+          var fresh = document.createElement("script");
+          for (var i = 0; i < old.attributes.length; i++) {
+            fresh.setAttribute(old.attributes[i].name, old.attributes[i].value);
+          }
+          fresh.textContent = old.textContent;
+          old.replaceWith(fresh);
+        });
+      }
+
+      window.navigate = function (url, push) {
+        if (push === undefined) push = true;
+        fetch(url)
+          .then(function (res) {
+            if (!res.ok) throw new Error("Navigation failed: " + res.status);
+            return res.text();
+          })
+          .then(function (html) {
+            var doc = new DOMParser().parseFromString(html, "text/html");
+            var newMain = doc.querySelector("main.main");
+            var newSidebar = doc.querySelector(".sidebar");
+            if (!newMain) {
+              window.location.href = url;
+              return;
+            }
+            document.title = doc.title;
+            var mainEl = document.querySelector("main.main");
+            mainEl.innerHTML = newMain.innerHTML;
+            runScripts(mainEl);
+            if (newSidebar) document.querySelector(".sidebar").innerHTML = newSidebar.innerHTML;
+            if (push) window.history.pushState({}, "", url);
+            window.scrollTo(0, 0);
+          })
+          .catch(function (err) {
+            console.error(err);
+            window.location.href = url;
+          });
+      };
+
+      document.addEventListener("click", function (e) {
+        if (e.defaultPrevented || e.button !== 0) return;
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        var a = e.target.closest("a");
+        if (!a) return;
+        var href = a.getAttribute("href");
+        if (!href || href.charAt(0) === "#") return;
+        if (a.target && a.target !== "_self") return;
+        if (a.hasAttribute("download")) return;
+        var url;
+        try {
+          url = new URL(a.href, window.location.href);
+        } catch (err) {
+          return;
+        }
+        if (url.origin !== window.location.origin) return;
+        if (EXCLUDED_PREFIXES.some(function (p) { return url.pathname.indexOf(p) === 0; })) return;
+        e.preventDefault();
+        window.navigate(url.href);
+      });
+
+      window.addEventListener("popstate", function () {
+        window.navigate(window.location.href, false);
+      });
+    })();
+  </script>
+
+  <script>
     (function () {
       var destinations = ${JSON.stringify(paletteDestinations)};
       var overlay = document.getElementById("cmdk-overlay");
@@ -247,7 +325,8 @@ async function renderLayout({ title, activeAccountId, accounts, body }) {
             (d.hint ? '<span class="cmdk-result-hint">' + d.hint + "</span>" : "");
           row.addEventListener("mousedown", function (e) {
             e.preventDefault();
-            window.location.href = d.url;
+            closePalette();
+            window.navigate(d.url);
           });
           resultsEl.appendChild(row);
         });
@@ -288,7 +367,10 @@ async function renderLayout({ title, activeAccountId, accounts, body }) {
           render();
         } else if (e.key === "Enter") {
           e.preventDefault();
-          if (filtered[selected]) window.location.href = filtered[selected].url;
+          if (filtered[selected]) {
+            closePalette();
+            window.navigate(filtered[selected].url);
+          }
         } else if (e.key === "Escape") {
           e.preventDefault();
           closePalette();
@@ -358,6 +440,47 @@ app.get("/", async (req, res) => {
         [showDone, selectedAccountIds]
       )
     : { rows: [] };
+
+  // Unified dashboard: small at-a-glance widgets for the other sections, so the
+  // home page doesn't require clicking into Meetings/Invoices just to see whether
+  // anything's waiting there.
+  const { rows: [invoiceSummary] } = await pool.query(
+    `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount), 0)::float AS total
+     FROM invoices WHERE paid = false`
+  );
+  const { rows: [meetingSummary] } = await pool.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE status IN ('joining', 'recording'))::int AS in_progress,
+       (SELECT title FROM meetings ORDER BY started_at DESC LIMIT 1) AS latest_title,
+       (SELECT started_at FROM meetings ORDER BY started_at DESC LIMIT 1) AS latest_started_at
+     FROM meetings`
+  );
+  const fmtUsd = (n) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
+
+  const dashboardWidgets = `
+    <div class="dashboard-widgets">
+      <a class="widget-card" href="/invoices">
+        <div class="widget-label">Invoices</div>
+        <div class="widget-value">${invoiceSummary.count}</div>
+        <div class="widget-sub">${invoiceSummary.count ? `unpaid · ${fmtUsd(invoiceSummary.total)} due` : "all caught up"}</div>
+      </a>
+      <a class="widget-card" href="/meetings">
+        <div class="widget-label">Meetings</div>
+        <div class="widget-value">${meetingSummary.in_progress || "—"}</div>
+        <div class="widget-sub">${
+          meetingSummary.in_progress
+            ? `${meetingSummary.in_progress} recording now`
+            : meetingSummary.latest_title
+            ? `Last: ${escapeHtml(meetingSummary.latest_title)}`
+            : "None yet"
+        }</div>
+      </a>
+      <a class="widget-card" href="/chat">
+        <div class="widget-label">Chat</div>
+        <div class="widget-value">💬</div>
+        <div class="widget-sub">Ask or draft from scratch</div>
+      </a>
+    </div>`;
 
   const priorityRows = priorities.length
     ? priorities
@@ -473,6 +596,9 @@ app.get("/", async (req, res) => {
       ${showDone ? "Urgent items you've marked done." : "Every urgent email across your connected inboxes, in one list."}
       ${showDone ? `<a href="/" style="margin-left:8px;">← Back to active</a>` : `<a href="/?view=done" style="margin-left:8px;">View completed →</a>`}
     </p>
+
+    ${showDone ? "" : dashboardWidgets}
+
     <p class="keyboard-hint"><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>d</kbd> ${showDone ? "undo" : "done"} · ${showDone ? "" : "<kbd>p</kbd> pin · "}<kbd>x</kbd> delete · <kbd>enter</kbd> open</p>
 
     ${
@@ -640,7 +766,7 @@ app.get("/", async (req, res) => {
     </script>
   `;
 
-  res.send(await renderLayout({ title: "Home", activeAccountId: null, accounts, body }));
+  res.send(await renderLayout({ title: "Home", activeAccountId: null, accounts, body, activePage: "priorities" }));
 });
 
 // ---------- Top priorities actions ----------
@@ -904,7 +1030,7 @@ app.get("/meetings", async (req, res) => {
     </script>
   `;
 
-  res.send(await renderLayout({ title: "Meetings", activeAccountId: null, accounts, body }));
+  res.send(await renderLayout({ title: "Meetings", activeAccountId: null, accounts, body, activePage: "meetings" }));
 });
 
 app.post("/meetings/create", async (req, res) => {
@@ -1051,7 +1177,7 @@ app.get("/invoices", async (req, res) => {
     <div class="priority-list">${invoiceListHtml}</div>
   `;
 
-  res.send(await renderLayout({ title: "Invoices", activeAccountId: null, accounts, body }));
+  res.send(await renderLayout({ title: "Invoices", activeAccountId: null, accounts, body, activePage: "invoices" }));
 });
 
 app.post("/invoices/scan", async (req, res) => {
@@ -1093,7 +1219,7 @@ app.get("/chat", async (req, res) => {
     result: null,
     indexing: !!req.query.indexing,
   });
-  res.send(await renderLayout({ title: "Chat", activeAccountId: null, accounts, body }));
+  res.send(await renderLayout({ title: "Chat", activeAccountId: null, accounts, body, activePage: "chat" }));
 });
 
 app.post("/chat/build-index", async (req, res) => {
@@ -1194,7 +1320,7 @@ app.post("/chat", async (req, res) => {
   }
 
   const body = renderChatPage({ accounts, selectedAccountId: accountId, message, result });
-  res.send(await renderLayout({ title: "Chat", activeAccountId: null, accounts, body }));
+  res.send(await renderLayout({ title: "Chat", activeAccountId: null, accounts, body, activePage: "chat" }));
 });
 
 function renderChatPage({ accounts, selectedAccountId, message, result, indexing }) {

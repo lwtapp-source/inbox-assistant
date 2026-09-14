@@ -346,6 +346,52 @@ code {
   font-size: 13px;
 }
 
+/* ---------- Dashboard widgets ---------- */
+
+.dashboard-widgets {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 28px;
+  flex-wrap: wrap;
+}
+
+.widget-card {
+  flex: 1;
+  min-width: 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  text-decoration: none;
+  color: var(--ink);
+  transition: border-color 0.15s ease;
+}
+
+.widget-card:hover {
+  border-color: var(--accent);
+}
+
+.widget-label {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 6px;
+}
+
+.widget-value {
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+
+.widget-sub {
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
 /* ---------- Category rows ---------- */
 
 .category-row {
