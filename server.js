@@ -30,6 +30,7 @@ import {
   draftFromScratch,
   summarizeMeeting,
   translateText,
+  answerFromTranscript,
 } from "./src/ai.js";
 import * as gmailProvider from "./src/providers/gmail.js";
 import * as outlookProvider from "./src/providers/outlook.js";
@@ -1151,6 +1152,20 @@ app.get("/meetings/:id", async (req, res) => {
     ${req.query.error ? `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">${escapeHtml(req.query.error)}</div><br/>` : ""}
 
     <div class="section">
+      <h2>Ask about this meeting</h2>
+      <p class="section-help">
+        Ask a specific question instead of rereading the transcript — e.g. "What did we
+        decide about pricing?" or "What action items were assigned to Sandy?"
+      </p>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="ask-question" placeholder="Ask a question…"
+          style="flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;" />
+        <button type="button" id="ask-btn">Ask</button>
+      </div>
+      <div id="ask-answer" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="section">
       <h2>Summary</h2>
       <form method="POST" action="/meetings/${meeting.id}/regenerate" style="display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
         <select name="style" style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
@@ -1205,6 +1220,43 @@ app.get("/meetings/:id", async (req, res) => {
     </div>
 
     <script>
+      (function () {
+        var askBtn = document.getElementById("ask-btn");
+        var askInput = document.getElementById("ask-question");
+        var askAnswer = document.getElementById("ask-answer");
+        if (!askBtn) return;
+
+        async function ask() {
+          var question = askInput.value.trim();
+          if (!question) return;
+          askBtn.disabled = true;
+          askAnswer.innerHTML = '<p class="section-help" style="margin:0;">Thinking…</p>';
+          try {
+            var res = await fetch(window.location.pathname + "/ask", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ question: question }),
+            });
+            var data = await res.json();
+            if (!res.ok || !data.ok) throw new Error(data.error || "Request failed");
+            var box = document.createElement("p");
+            box.style.cssText = "white-space:pre-wrap; border:1px solid var(--border); border-radius:var(--radius); padding:14px; background:var(--surface); margin:0;";
+            box.textContent = data.answer;
+            askAnswer.innerHTML = "";
+            askAnswer.appendChild(box);
+          } catch (err) {
+            askAnswer.innerHTML = '<p class="section-help" style="margin:0; color:var(--urgent);">Could not get an answer — please try again.</p>';
+          } finally {
+            askBtn.disabled = false;
+          }
+        }
+
+        askBtn.addEventListener("click", ask);
+        askInput.addEventListener("keydown", function (e) {
+          if (e.key === "Enter") ask();
+        });
+      })();
+
       document.getElementById("copy-summary-btn")?.addEventListener("click", function () {
         navigator.clipboard.writeText(document.getElementById("summary-text").value);
         this.textContent = "Copied!";
@@ -1305,6 +1357,27 @@ app.post("/meetings/:id/translate", async (req, res) => {
   } catch (err) {
     console.error("Meeting translate failed:", err.message);
     res.redirect(`/meetings/${req.params.id}?error=${encodeURIComponent("Couldn't translate the summary — please try again.")}`);
+  }
+});
+
+app.post("/meetings/:id/ask", express.json(), async (req, res) => {
+  const question = req.body?.question?.trim();
+  if (!question) return res.status(400).json({ ok: false, error: "No question given" });
+
+  try {
+    const { rows } = await pool.query(`SELECT transcript FROM meetings WHERE id = $1`, [
+      req.params.id,
+    ]);
+    const transcript = rows[0]?.transcript;
+    if (!transcript?.trim()) {
+      return res.status(400).json({ ok: false, error: "No transcript to search yet" });
+    }
+
+    const answer = await answerFromTranscript(transcript, question);
+    res.json({ ok: true, answer });
+  } catch (err) {
+    console.error("Meeting ask failed:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 

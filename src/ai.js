@@ -445,6 +445,30 @@ ${transcript}`,
   }
 }
 
+// Matches Fyxer's "Insights" — ask a natural-language question about one specific meeting
+// instead of rereading the whole transcript. A single transcript comfortably fits in one
+// prompt (already capped to MAX_TRANSCRIPT_CHARS before it ever reaches here), so this is
+// a plain direct question, not a search — no retrieval step needed.
+export async function answerFromTranscript(transcript, question) {
+  const msg = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 500,
+    messages: [
+      {
+        role: "user",
+        content: `Answer this question using only the meeting transcript below. If the
+transcript doesn't answer it, say so plainly rather than guessing.
+
+QUESTION: ${question}
+
+TRANSCRIPT:
+${transcript}`,
+      },
+    ],
+  });
+  return msg.content[0]?.text ?? "";
+}
+
 // Translates a meeting summary into another language on request — not run automatically,
 // only when the user asks for a specific language.
 export async function translateText(text, targetLanguage) {
