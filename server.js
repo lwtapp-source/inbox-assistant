@@ -13,6 +13,7 @@ import { pollAllAccounts, generateAndCreateDraft } from "./src/poller.js";
 import { bulkSortRecent } from "./src/bulkSort.js";
 import { checkAllFollowUps } from "./src/followUp.js";
 import { checkAllDraftEdits } from "./src/learning.js";
+import { checkAllAutoResolved } from "./src/autoResolve.js";
 import { scanForInvoices, applyInvoiceScanResults } from "./src/invoiceScan.js";
 import { applyBulkSortResults } from "./src/bulkSort.js";
 import { checkPendingBatches } from "./src/anthropicBatch.js";
@@ -1476,12 +1477,14 @@ app.get("/poll", async (req, res) => {
   const pollResults = await pollAllAccounts();
   const followUpResults = await checkAllFollowUps();
   const learningResults = await checkAllDraftEdits();
+  const autoResolvedResults = await checkAllAutoResolved();
   const batchResults = await processPendingBatches();
   const meetingResults = await checkPendingMeetings();
   res.json({
     poll: pollResults,
     followUps: followUpResults,
     learning: learningResults,
+    autoResolved: autoResolvedResults,
     batches: batchResults,
     meetings: meetingResults,
   });
@@ -2101,6 +2104,10 @@ async function start() {
     console.log("Checking draft edits (passive learning)...");
     const learningResults = await checkAllDraftEdits();
     console.log(learningResults);
+
+    console.log("Checking for auto-resolved priorities...");
+    const autoResolvedResults = await checkAllAutoResolved();
+    console.log(autoResolvedResults);
 
     console.log("Checking pending batch jobs...");
     const batchResults = await processPendingBatches();

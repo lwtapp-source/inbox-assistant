@@ -93,11 +93,13 @@ export async function initSchema() {
       web_link TEXT,
       pinned BOOLEAN DEFAULT false,
       done BOOLEAN DEFAULT false,
+      thread_key TEXT,                  -- Gmail threadId or Outlook conversationId, for auto-resolving
       processed_at TIMESTAMPTZ DEFAULT now(),
       UNIQUE(account_id, message_id)
     );
 
     ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS subject TEXT;
+    ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS thread_key TEXT;
     ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS from_address TEXT;
     ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS snippet TEXT;
     ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS web_link TEXT;
