@@ -1094,7 +1094,10 @@ app.get("/meetings", async (req, res) => {
                <input type="text" id="record-title" placeholder="Meeting title (optional)" style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; min-width:200px;" />
                <button type="button" id="record-start-btn">🎙️ Start recording</button>
                <button type="button" id="record-stop-btn" style="display:none; background:var(--urgent);">⏹ Stop &amp; upload</button>
-               <span id="record-status" class="section-help" style="margin:0;"></span>
+               <span class="section-help" style="margin:0; display:flex; align-items:center; gap:6px;">
+                 <span id="record-dot" class="record-dot" hidden></span>
+                 <span id="record-status"></span>
+               </span>
              </div>
            </div>
 
@@ -1119,11 +1122,19 @@ app.get("/meetings", async (req, res) => {
 
     <script>
       (function () {
-        let mediaRecorder, chunks, startTime;
+        let mediaRecorder, chunks, startTime, timerInterval;
         const startBtn = document.getElementById("record-start-btn");
         const stopBtn = document.getElementById("record-stop-btn");
         const statusEl = document.getElementById("record-status");
+        const dotEl = document.getElementById("record-dot");
         if (!startBtn) return;
+
+        function formatElapsed(ms) {
+          const totalSeconds = Math.floor(ms / 1000);
+          const m = Math.floor(totalSeconds / 60);
+          const s = totalSeconds % 60;
+          return m + ":" + String(s).padStart(2, "0");
+        }
 
         startBtn.addEventListener("click", async () => {
           try {
@@ -1135,7 +1146,11 @@ app.get("/meetings", async (req, res) => {
             startTime = Date.now();
             startBtn.style.display = "none";
             stopBtn.style.display = "";
-            statusEl.textContent = "Recording…";
+            dotEl.hidden = false;
+            statusEl.textContent = "Recording… 0:00";
+            timerInterval = setInterval(() => {
+              statusEl.textContent = "Recording… " + formatElapsed(Date.now() - startTime);
+            }, 1000);
           } catch (err) {
             alert("Couldn't access your microphone — check your browser's permission settings for this site.");
           }
@@ -1148,6 +1163,8 @@ app.get("/meetings", async (req, res) => {
             return;
           }
           stopBtn.disabled = true;
+          clearInterval(timerInterval);
+          dotEl.hidden = true;
           statusEl.textContent = "Uploading…";
 
           mediaRecorder.addEventListener("stop", async () => {

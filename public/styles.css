@@ -860,3 +860,24 @@ input[type="file"] {
     padding: 28px 20px;
   }
 }
+
+.record-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--urgent);
+  display: inline-block;
+  flex-shrink: 0;
+  animation: record-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes record-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
