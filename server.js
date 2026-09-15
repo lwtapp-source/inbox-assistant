@@ -256,7 +256,10 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
 <body>
   <div class="app">
     <aside class="sidebar">
-      <a href="/" style="text-decoration:none;"><div class="wordmark">Inbox<br />Assistant</div></a>
+      <div class="sidebar-header">
+        <a href="/" style="text-decoration:none;"><div class="wordmark">Inbox<br />Assistant</div></a>
+        <button type="button" id="sidebar-toggle" class="sidebar-toggle" aria-label="Toggle menu">☰</button>
+      </div>
       <div class="cmdk-hint">Press <kbd>⌘K</kbd> to jump anywhere</div>
       ${
         failingAccounts.length > 0
@@ -268,23 +271,25 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
           ? `<a href="/" style="display:block; margin-top:10px; padding:6px 10px; background:rgba(255,255,255,0.06); border-radius:6px; color:#e0b989; font-size:12.5px; text-decoration:none;">⏸ ${pausedCount} account${pausedCount === 1 ? "" : "s"} paused</a>`
           : ""
       }
-      <nav class="account-nav">
-        <div class="nav-label">Tools</div>
-        <a href="/" class="account-link ${activePage === "priorities" ? "active" : ""}">🗂️ Priorities</a>
-        <a href="/chat" class="account-link ${activePage === "chat" ? "active" : ""}">💬 Chat</a>
-        <a href="/invoices" class="account-link ${activePage === "invoices" ? "active" : ""}">🧾 Invoices${invoiceBadge.count ? `<span class="nav-badge">${invoiceBadge.count}</span>` : ""}</a>
-        <a href="/meetings" class="account-link ${activePage === "meetings" ? "active" : ""}">🎙️ Meetings${meetingBadge.count ? `<span class="nav-badge">${meetingBadge.count}</span>` : ""}</a>
-      </nav>
-      <nav class="account-nav">
-        <div class="nav-label">Accounts</div>
-        ${navLinks}
-      </nav>
-      <div class="connect-links">
-        <div class="nav-label">Connect</div>
-        <a href="/auth/google" class="connect-link">+ Gmail account</a>
-        <a href="/auth/outlook" class="connect-link">+ Outlook account</a>
-        <button type="button" id="theme-toggle" class="connect-link" style="margin-top:16px; cursor:pointer; border:none; background:none; width:100%; text-align:left; font:inherit;">🌓 Toggle theme</button>
-        <a href="/logout" class="connect-link">Log out</a>
+      <div class="sidebar-collapsible">
+        <nav class="account-nav">
+          <div class="nav-label">Tools</div>
+          <a href="/" class="account-link ${activePage === "priorities" ? "active" : ""}">🗂️ Priorities</a>
+          <a href="/chat" class="account-link ${activePage === "chat" ? "active" : ""}">💬 Chat</a>
+          <a href="/invoices" class="account-link ${activePage === "invoices" ? "active" : ""}">🧾 Invoices${invoiceBadge.count ? `<span class="nav-badge">${invoiceBadge.count}</span>` : ""}</a>
+          <a href="/meetings" class="account-link ${activePage === "meetings" ? "active" : ""}">🎙️ Meetings${meetingBadge.count ? `<span class="nav-badge">${meetingBadge.count}</span>` : ""}</a>
+        </nav>
+        <nav class="account-nav">
+          <div class="nav-label">Accounts</div>
+          ${navLinks}
+        </nav>
+        <div class="connect-links">
+          <div class="nav-label">Connect</div>
+          <a href="/auth/google" class="connect-link">+ Gmail account</a>
+          <a href="/auth/outlook" class="connect-link">+ Outlook account</a>
+          <button type="button" id="theme-toggle" class="connect-link" style="margin-top:16px; cursor:pointer; border:none; background:none; width:100%; text-align:left; font:inherit;">🌓 Toggle theme</button>
+          <a href="/logout" class="connect-link">Log out</a>
+        </div>
       </div>
     </aside>
     <main class="main">
@@ -388,6 +393,16 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
         try {
           localStorage.setItem("theme", next);
         } catch (err) {}
+      });
+
+      // Same delegation reasoning as the theme toggle above. The sidebar re-renders
+      // collapsed on every navigation (fresh server HTML has no "open" class), which is
+      // the desired behavior — no state to persist here.
+      document.addEventListener("click", function (e) {
+        var btn = e.target.closest("#sidebar-toggle");
+        if (!btn) return;
+        var sidebar = document.querySelector(".sidebar");
+        if (sidebar) sidebar.classList.toggle("open");
       });
     })();
   </script>

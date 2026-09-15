@@ -142,6 +142,27 @@ body {
   letter-spacing: -0.01em;
 }
 
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Reproduces the 32px gap .sidebar gives its direct children — this is one child now,
+   wrapping what used to be three (Tools/Accounts nav + Connect links), so it needs its
+   own flex column to keep the same spacing between them. */
+.sidebar-collapsible {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+/* Hidden on desktop; the @media block below turns this into the mobile menu button and
+   makes .sidebar-collapsible collapsible instead of always shown. */
+.sidebar-toggle {
+  display: none;
+}
+
 .cmdk-hint {
   color: #9aa39d;
   font-size: 12px;
@@ -858,6 +879,39 @@ input[type="file"] {
   }
   .main {
     padding: 28px 20px;
+  }
+
+  /* Collapsed by default: on a phone, the nav/accounts/connect list previously pushed
+     every page's actual content below a full screen of scrolling before it appeared. */
+  .sidebar-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius);
+    border: none;
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+    font-size: 18px;
+    cursor: pointer;
+  }
+  .sidebar-collapsible {
+    display: none;
+  }
+  .sidebar.open .sidebar-collapsible {
+    display: flex;
+  }
+
+  /* .priority-actions (Open/Draft reply/Pin/Done/Delete etc.) previously sat side-by-side
+     with the title/meta block, squeezing it into a narrow column and wrapping the subject
+     across several lines instead. */
+  .priority-row {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .priority-actions {
+    flex-wrap: wrap;
   }
 }
 
