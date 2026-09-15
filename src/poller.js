@@ -309,10 +309,22 @@ export async function pollAllAccounts() {
   const { rows } = await pool.query(`SELECT * FROM accounts WHERE active = true`);
   const results = [];
   for (const account of rows) {
+    await pool.query(`UPDATE accounts SET last_poll_attempt_at = now() WHERE id = $1`, [account.id]);
     try {
       const r = await pollAccount(account);
+      await pool.query(
+        `UPDATE accounts SET last_poll_success_at = now(), last_poll_error = NULL WHERE id = $1`,
+        [account.id]
+      );
       results.push({ email: account.email, provider: account.provider, ...r });
     } catch (err) {
+      // Recorded so a persistent failure (e.g. an expired token, an exhausted API
+      // credit balance) shows up as a banner instead of only ever appearing in logs
+      // nobody's watching overnight.
+      await pool.query(`UPDATE accounts SET last_poll_error = $1 WHERE id = $2`, [
+        err.message,
+        account.id,
+      ]);
       results.push({ email: account.email, provider: account.provider, error: err.message });
     }
   }

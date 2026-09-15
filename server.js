@@ -14,6 +14,7 @@ import { bulkSortRecent } from "./src/bulkSort.js";
 import { checkAllFollowUps } from "./src/followUp.js";
 import { checkAllDraftEdits } from "./src/learning.js";
 import { checkAllAutoResolved } from "./src/autoResolve.js";
+import { cleanupOldProcessedMessages } from "./src/cleanup.js";
 import { scanForInvoices, applyInvoiceScanResults } from "./src/invoiceScan.js";
 import { applyBulkSortResults } from "./src/bulkSort.js";
 import { checkPendingBatches } from "./src/anthropicBatch.js";
@@ -107,15 +108,46 @@ function renderLoginPage(error) {
 </html>`;
 }
 
+// In-memory brute-force guard, keyed by IP. Fine for a single-instance app (see
+// render.yaml — numInstances: 1); a multi-instance deployment would need this in
+// a shared store (e.g. the same Postgres) instead.
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+const loginAttempts = new Map(); // ip -> { count, lockedUntil }
+
+function getLoginAttempt(ip) {
+  return loginAttempts.get(ip) || { count: 0, lockedUntil: 0 };
+}
+
+function isLoginLocked(ip) {
+  return getLoginAttempt(ip).lockedUntil > Date.now();
+}
+
 app.get("/login", (req, res) => {
+  if (isLoginLocked(req.ip)) {
+    return res.status(429).send(renderLoginPage("Too many failed attempts — try again in a few minutes."));
+  }
   res.send(renderLoginPage());
 });
 
 app.post("/login", (req, res) => {
+  if (isLoginLocked(req.ip)) {
+    return res.status(429).send(renderLoginPage("Too many failed attempts — try again in a few minutes."));
+  }
+
   if (req.body.password && req.body.password === process.env.APP_PASSWORD) {
+    loginAttempts.delete(req.ip);
     req.session.authenticated = true;
     return res.redirect("/");
   }
+
+  const attempt = getLoginAttempt(req.ip);
+  attempt.count++;
+  if (attempt.count >= LOGIN_MAX_ATTEMPTS) {
+    attempt.lockedUntil = Date.now() + LOGIN_LOCKOUT_MS;
+    attempt.count = 0;
+  }
+  loginAttempts.set(req.ip, attempt);
   res.status(401).send(renderLoginPage("Wrong password."));
 });
 
@@ -150,6 +182,12 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
     `SELECT COUNT(*)::int AS count FROM accounts WHERE active = false`
   );
   const pausedCount = pausedRows[0]?.count || 0;
+
+  // Surfaces a persistent poll failure (expired token, exhausted API credits, etc.)
+  // somewhere it can't be missed, instead of only ever showing up in server logs.
+  const { rows: failingAccounts } = await pool.query(
+    `SELECT id, email FROM accounts WHERE active = true AND last_poll_error IS NOT NULL`
+  );
 
   const navLinks = accounts.length
     ? accounts
@@ -198,6 +236,11 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
     <aside class="sidebar">
       <a href="/" style="text-decoration:none;"><div class="wordmark">Inbox<br />Assistant</div></a>
       <div class="cmdk-hint">Press <kbd>⌘K</kbd> to jump anywhere</div>
+      ${
+        failingAccounts.length > 0
+          ? `<a href="/settings/${failingAccounts[0].id}" style="display:block; margin-top:10px; padding:6px 10px; background:rgba(220,80,80,0.18); border-radius:6px; color:#ffb4a8; font-size:12.5px; text-decoration:none;" title="${escapeHtml(failingAccounts.map((a) => a.email).join(", "))}">⚠ Polling failing for ${failingAccounts.length} account${failingAccounts.length === 1 ? "" : "s"}</a>`
+          : ""
+      }
       ${
         pausedCount > 0
           ? `<a href="/" style="display:block; margin-top:10px; padding:6px 10px; background:rgba(255,255,255,0.06); border-radius:6px; color:#e0b989; font-size:12.5px; text-decoration:none;">⏸ ${pausedCount} account${pausedCount === 1 ? "" : "s"} paused</a>`
@@ -1869,6 +1912,7 @@ app.get("/poll", async (req, res) => {
   const autoResolvedResults = await checkAllAutoResolved();
   const batchResults = await processPendingBatches();
   const meetingResults = await checkPendingMeetings();
+  const cleanupResults = await cleanupOldProcessedMessages();
   res.json({
     poll: pollResults,
     followUps: followUpResults,
@@ -1876,6 +1920,7 @@ app.get("/poll", async (req, res) => {
     autoResolved: autoResolvedResults,
     batches: batchResults,
     meetings: meetingResults,
+    cleanup: cleanupResults,
   });
 });
 
@@ -1959,7 +2004,7 @@ app.get("/settings/:id", async (req, res) => {
             learned_style_notes, timezone, work_start_hour, work_end_hour, notice_hours,
             scheduling_days_ahead, follow_up_days, auto_calendar_events, active, auto_draft_replies,
             move_urgent, move_fyi, move_marketing, move_notifications, move_invoices,
-            auto_archive_after_reply
+            auto_archive_after_reply, last_poll_attempt_at, last_poll_success_at, last_poll_error
      FROM accounts WHERE id = $1`,
     [req.params.id]
   );
@@ -2027,6 +2072,13 @@ app.get("/settings/:id", async (req, res) => {
     ${req.query.saved ? `<div class="saved-banner">Saved</div><br/>` : ""}
     ${req.query.uploaded ? `<div class="saved-banner">File uploaded</div><br/>` : ""}
     ${req.query.upload_error ? `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">${req.query.upload_error}</div><br/>` : ""}
+    ${
+      account.last_poll_error
+        ? `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">
+             ⚠ Polling has been failing since ${new Date(account.last_poll_attempt_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: account.timezone || "America/New_York" })}: ${escapeHtml(account.last_poll_error)}
+           </div><br/>`
+        : ""
+    }
 
     <nav class="settings-jump-nav">
       <a href="#triage-rules">Triage</a>
@@ -2536,6 +2588,10 @@ async function start() {
     console.log("Checking pending meetings...");
     const meetingResults = await checkPendingMeetings();
     console.log(meetingResults);
+
+    console.log("Cleaning up old processed messages...");
+    const cleanupResults = await cleanupOldProcessedMessages();
+    console.log(cleanupResults);
   }, intervalMs);
 }
 

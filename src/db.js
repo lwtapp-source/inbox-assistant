@@ -51,6 +51,9 @@ export async function initSchema() {
       move_invoices BOOLEAN DEFAULT true,      -- move "invoices"-labeled mail out of the inbox into a folder
       move_low_priority BOOLEAN DEFAULT true,  -- legacy column, kept for old data; no longer written to
       auto_archive_after_reply BOOLEAN DEFAULT true, -- once you've replied to an urgent thread, move it out of the inbox
+      last_poll_attempt_at TIMESTAMPTZ,  -- set at the start of every poll cycle, success or failure
+      last_poll_success_at TIMESTAMPTZ,  -- only set when a poll cycle completes without throwing
+      last_poll_error TEXT,              -- the most recent poll failure's message, cleared on success
       created_at TIMESTAMPTZ DEFAULT now()
     );
 
@@ -83,6 +86,9 @@ export async function initSchema() {
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_invoices BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS move_low_priority BOOLEAN DEFAULT true;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS auto_archive_after_reply BOOLEAN DEFAULT true;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_poll_attempt_at TIMESTAMPTZ;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_poll_success_at TIMESTAMPTZ;
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_poll_error TEXT;
     ALTER TABLE accounts ALTER COLUMN move_fyi SET DEFAULT true;
 
     CREATE TABLE IF NOT EXISTS processed_messages (
