@@ -758,6 +758,7 @@ app.get("/", async (req, res) => {
             ${p.snippet ? `<div class="priority-snippet">${escapeHtml(p.snippet)}</div>` : ""}
           </div>
           <div class="priority-actions">
+            <a href="/priorities/${p.id}/view">View</a>
             ${
               p.web_link
                 ? `<a href="${
@@ -1162,6 +1163,102 @@ app.get("/", async (req, res) => {
 function isAjax(req) {
   return req.get("X-Requested-With") === "fetch";
 }
+
+// In-app message viewer — fetches the body fresh from the provider on every view rather
+// than storing it (processed_messages only ever kept subject/snippet/from, not the full
+// body), so this stays a read, not a second copy of the email living in our own DB. Body
+// is plain text only: both providers already strip email HTML down to plain text before
+// it reaches the app (see getMessageDetail in src/providers/*), specifically so nothing
+// here ever has to render attacker-controlled HTML/CSS from a message in an authenticated
+// session.
+app.get("/priorities/:id/view", async (req, res) => {
+  const accounts = await getAccounts();
+  const { rows } = await pool.query(
+    `SELECT pm.*, a.email AS account_email, a.provider AS account_provider, a.timezone AS account_timezone
+     FROM processed_messages pm
+     JOIN accounts a ON a.id = pm.account_id
+     WHERE pm.id = $1`,
+    [req.params.id]
+  );
+  const pm = rows[0];
+  if (!pm) {
+    return res.status(404).send(
+      await renderLayout({
+        title: "Not found",
+        activeAccountId: null,
+        accounts,
+        body: `<h1>Not found</h1><p><a href="/">← Back to Top priorities</a></p>`,
+        activePage: "priorities",
+      })
+    );
+  }
+
+  const { rows: accountRows } = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [pm.account_id]);
+  const account = accountRows[0];
+  const provider = account ? chatProviders[account.provider] : null;
+
+  let bodyText = "";
+  let fetchError = null;
+  if (account && provider) {
+    try {
+      const detail = await provider.getMessageDetail(account, pm.message_id);
+      bodyText = detail.body || "";
+    } catch (err) {
+      console.error("Failed to fetch message body for viewer:", err.message);
+      fetchError = "Couldn't load the full message right now — try Open instead.";
+    }
+  } else {
+    fetchError = "This account is no longer connected.";
+  }
+
+  const openLink = pm.web_link
+    ? pm.account_provider === "outlook"
+      ? pm.web_link + (pm.web_link.includes("?") ? "&" : "?") + "login_hint=" + encodeURIComponent(pm.account_email)
+      : pm.web_link
+    : null;
+
+  const body = `
+    <p><a href="/">← Back to Top priorities</a></p>
+    <h1>${escapeHtml(pm.subject) || "(no subject)"}</h1>
+    <p class="priority-meta">${escapeHtml(pm.from_address)} · ${escapeHtml(pm.account_email)} · ${new Date(pm.processed_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: pm.account_timezone || "America/New_York" })}</p>
+
+    <div class="priority-actions" style="margin:16px 0 20px;">
+      ${openLink ? `<a href="${openLink}" target="_blank" rel="noopener">Open in ${pm.account_provider === "outlook" ? "Outlook" : "Gmail"}</a>` : ""}
+      ${
+        !pm.done
+          ? `${
+              !pm.draft_created
+                ? `<form method="POST" action="/priorities/${pm.id}/draft" style="display:inline;">
+                     <button type="submit" class="link-button">Draft reply</button>
+                   </form>`
+                : `<span class="section-help" style="margin:0;">Draft ready</span>`
+            }
+             <form method="POST" action="/priorities/${pm.id}/pin" style="display:inline;">
+               <button type="submit" class="link-button">${pm.pinned ? "Unpin" : "Pin"}</button>
+             </form>
+             <form method="POST" action="/priorities/${pm.id}/done" style="display:inline;">
+               <button type="submit" class="link-button">Done</button>
+             </form>`
+          : `<form method="POST" action="/priorities/${pm.id}/undone" style="display:inline;">
+               <button type="submit" class="link-button">Undo</button>
+             </form>`
+      }
+      <form method="POST" action="/priorities/${pm.id}/delete" style="display:inline;">
+        <button type="submit" class="link-button danger" onclick="return confirm('Delete this priority? This only removes it from the dashboard — the original email stays in your inbox.');">Delete</button>
+      </form>
+    </div>
+
+    ${
+      fetchError
+        ? `<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">${escapeHtml(fetchError)}</div>`
+        : `<div class="section" style="border-top:none; padding-top:0;">
+             <p style="white-space:pre-wrap; border:1px solid var(--border); border-radius:var(--radius); padding:16px; background:var(--surface);">${escapeHtml(bodyText) || "(empty message)"}</p>
+           </div>`
+    }
+  `;
+
+  res.send(await renderLayout({ title: pm.subject || "Message", activeAccountId: null, accounts, body, activePage: "priorities" }));
+});
 
 app.post("/priorities/:id/done", async (req, res) => {
   await pool.query(`UPDATE processed_messages SET done = true WHERE id = $1`, [req.params.id]);
