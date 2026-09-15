@@ -97,7 +97,7 @@ function renderLoginPage(error) {
   <div style="max-width:360px; margin:14vh auto 0; padding:0 24px;">
     <div class="wordmark" style="color:var(--ink); margin-bottom:28px;">Inbox<br />Assistant</div>
     <form method="POST" action="/login">
-      ${error ? `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">${error}</div><br/>` : ""}
+      ${error ? `<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">${error}</div><br/>` : ""}
       <p class="section-help" style="margin-top:0;">This tool manages real email and calendar access, so it's password-protected.</p>
       <input type="password" name="password" placeholder="Password" autofocus required
         style="width:100%; padding:11px 13px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; margin-bottom:12px;" />
@@ -223,6 +223,19 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${title} · Inbox Assistant</title>
+  <script>
+    // Runs before the stylesheet loads so a saved theme choice applies with no flash of
+    // the wrong theme. Absent an explicit choice, the CSS media query handles system
+    // preference on its own — this only matters once the user has overridden it.
+    (function () {
+      try {
+        var saved = localStorage.getItem("theme");
+        if (saved === "light" || saved === "dark") {
+          document.documentElement.setAttribute("data-theme", saved);
+        }
+      } catch (e) {}
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
@@ -261,7 +274,8 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
         <div class="nav-label">Connect</div>
         <a href="/auth/google" class="connect-link">+ Gmail account</a>
         <a href="/auth/outlook" class="connect-link">+ Outlook account</a>
-        <a href="/logout" class="connect-link" style="margin-top:16px;">Log out</a>
+        <button type="button" id="theme-toggle" class="connect-link" style="margin-top:16px; cursor:pointer; border:none; background:none; width:100%; text-align:left; font:inherit;">🌓 Toggle theme</button>
+        <a href="/logout" class="connect-link">Log out</a>
       </div>
     </aside>
     <main class="main">
@@ -349,6 +363,22 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
 
       window.addEventListener("popstate", function () {
         window.navigate(window.location.href, false);
+      });
+
+      // Delegated (not bound directly to the button) because the sidebar's innerHTML
+      // gets replaced wholesale on every soft-navigation above — a direct listener would
+      // stop working after the first click to a different page.
+      document.addEventListener("click", function (e) {
+        var btn = e.target.closest("#theme-toggle");
+        if (!btn) return;
+        var current = document.documentElement.getAttribute("data-theme");
+        var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var effectiveIsDark = current ? current === "dark" : prefersDark;
+        var next = effectiveIsDark ? "light" : "dark";
+        document.documentElement.setAttribute("data-theme", next);
+        try {
+          localStorage.setItem("theme", next);
+        } catch (err) {}
       });
     })();
   </script>
@@ -1030,7 +1060,7 @@ app.get("/meetings", async (req, res) => {
 
     ${req.query.started ? `<div class="saved-banner">Notetaker is joining the meeting — summary appears here once the call ends (usually within a few minutes after).</div><br/>` : ""}
     ${req.query.uploaded ? `<div class="saved-banner">Uploaded — transcribing now, check back in a few minutes.</div><br/>` : ""}
-    ${req.query.error ? `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">${escapeHtml(req.query.error)}</div><br/>` : ""}
+    ${req.query.error ? `<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">${escapeHtml(req.query.error)}</div><br/>` : ""}
 
     ${
       accounts.length
@@ -1300,7 +1330,7 @@ app.get("/meetings/:id", async (req, res) => {
     <p class="subtitle">${escapeHtml(meeting.account_email)} · ${dateStr} · ${MEETING_STATUS_LABEL[meeting.status] || meeting.status}</p>
 
     ${req.query.saved ? `<div class="saved-banner">Saved</div><br/>` : ""}
-    ${req.query.error ? `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">${escapeHtml(req.query.error)}</div><br/>` : ""}
+    ${req.query.error ? `<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">${escapeHtml(req.query.error)}</div><br/>` : ""}
 
     <div class="section">
       <h2>Ask about this meeting</h2>
@@ -1859,7 +1889,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
 
   let resultHtml = "";
   if (result?.error) {
-    resultHtml = `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">${result.error}</div>`;
+    resultHtml = `<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">${result.error}</div>`;
   } else if (result?.type === "search") {
     const sourceRows = result.sources
       .map(
@@ -2164,10 +2194,10 @@ app.get("/settings/:id", async (req, res) => {
 
     ${req.query.saved ? `<div class="saved-banner">Saved</div><br/>` : ""}
     ${req.query.uploaded ? `<div class="saved-banner">File uploaded</div><br/>` : ""}
-    ${req.query.upload_error ? `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">${req.query.upload_error}</div><br/>` : ""}
+    ${req.query.upload_error ? `<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">${req.query.upload_error}</div><br/>` : ""}
     ${
       account.last_poll_error
-        ? `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">
+        ? `<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">
              ⚠ Polling has been failing since ${new Date(account.last_poll_attempt_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: account.timezone || "America/New_York" })}: ${escapeHtml(account.last_poll_error)}
            </div><br/>`
         : ""

@@ -8,6 +8,8 @@
   --accent: #2f6f5e;
   --accent-dark: #1f4c40;
   --accent-wash: #eaf2ef;
+  --error-bg: #f7e9e4;
+  --error-ink: #8a3a20;
 
   --urgent: #c1502e;
   --fyi: #3a6ea5;
@@ -17,6 +19,47 @@
   --invoice: #2f7a52;
 
   --radius: 6px;
+
+  /* Deliberately not overridden in either dark block below — the sidebar is dark in
+     both themes on purpose, so it needs its own token instead of reusing --ink (which
+     flips to a light color in dark mode, since --ink also serves as body text). */
+  --sidebar-bg: #1e2422;
+}
+
+/* Dark theme: system preference by default (unless the user explicitly picked "light"
+   via the sidebar toggle), or an explicit "dark" choice always wins. The sidebar itself
+   stays dark in both themes on purpose — it already reads as a fixed, distinct surface —
+   so only the tokens used outside it need a dark variant here. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #17191b;
+    --surface: #1f2225;
+    --ink: #e8eae7;
+    --ink-soft: #a6ada8;
+    --ink-faint: #767d78;
+    --border: #33373a;
+    --accent: #4f9d7e;
+    --accent-dark: #5cb890;
+    --accent-wash: #17261f;
+    --error-bg: #3a2420;
+    --error-ink: #e8a692;
+    --notifications: #9aa1ab;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #17191b;
+  --surface: #1f2225;
+  --ink: #e8eae7;
+  --ink-soft: #a6ada8;
+  --ink-faint: #767d78;
+  --border: #33373a;
+  --accent: #4f9d7e;
+  --accent-dark: #5cb890;
+  --accent-wash: #17261f;
+  --error-bg: #3a2420;
+  --error-ink: #e8a692;
+  --notifications: #9aa1ab;
 }
 
 * {
@@ -82,7 +125,7 @@ body {
 .sidebar {
   width: 248px;
   flex-shrink: 0;
-  background: var(--ink);
+  background: var(--sidebar-bg);
   color: #eef1ef;
   padding: 28px 20px;
   display: flex;
@@ -330,6 +373,20 @@ textarea {
   font-family: inherit;
   font-size: 14px;
   resize: vertical;
+}
+
+/* Most inputs/selects across the app set their own padding/border inline (they predate
+   this rule) but never background/color, so they fell back to the browser's native white
+   field regardless of theme — fine in light mode, a jarring white box in dark mode. */
+input[type="text"],
+input[type="number"],
+input[type="password"],
+input[type="url"],
+input[type="email"],
+input[type="date"],
+select {
+  background: var(--surface);
+  color: var(--ink);
 }
 
 textarea:focus,
@@ -684,7 +741,7 @@ button[type="submit"].link-button.danger:hover {
   font-size: 11px;
   font-weight: 500;
   color: var(--urgent);
-  background: #f7e9e4;
+  background: var(--error-bg);
   padding: 2px 7px;
   border-radius: 999px;
 }
