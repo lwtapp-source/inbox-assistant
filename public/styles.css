@@ -891,6 +891,20 @@ button[type="submit"].link-button.danger:hover {
   border-radius: var(--radius) var(--radius) 0 0;
 }
 
+/* A j/k-.selected row's highlight is permanent, which would otherwise show through at
+   the same time as whichever different row is currently being hovered/expanded — two
+   rows lit up at once. While something is expanded (.priority-list.hovering, toggled in
+   server.js alongside .expanded), suppress .selected's highlight on every row except the
+   one actually expanded; only one row is ever highlighted at a time. */
+.priority-list.hovering .priority-row.selected:not(.expanded) {
+  background: none;
+  border-radius: 0;
+  padding-left: 0;
+  padding-right: 0;
+  margin-left: 0;
+  margin-right: 0;
+}
+
 .keyboard-hint {
   color: var(--ink-faint);
   font-size: 12.5px;

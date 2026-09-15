@@ -1147,6 +1147,13 @@ app.get("/", async (req, res) => {
           // long as its preview is open — otherwise it'd clear the moment the mouse moves
           // off the row and onto the preview text below it, breaking the seam between the
           // two right when you're reading the expanded content.
+          //
+          // list.classList "hovering" pairs with this: a j/k-.selected row keeps its own
+          // highlight permanently, which would otherwise show through *simultaneously*
+          // with whichever different row you're hovering (two rows lit up at once). While
+          // "hovering" is set, CSS suppresses .selected's highlight on every row except
+          // the one currently .expanded; removing "hovering" here (nothing left open)
+          // un-suppresses it, so the persistent selection's color reappears.
           function close() {
             if (openRow) openRow.classList.remove("expanded");
             if (openEl) {
@@ -1155,6 +1162,7 @@ app.get("/", async (req, res) => {
             }
             openEl = null;
             openRow = null;
+            list.classList.remove("hovering");
           }
 
           function scheduleClose() {
@@ -1188,6 +1196,7 @@ app.get("/", async (req, res) => {
             openEl = el;
             openRow = row;
             row.classList.add("expanded");
+            list.classList.add("hovering");
             el.hidden = false;
             el.dataset.forId = id;
 
