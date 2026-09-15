@@ -254,6 +254,7 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <div id="nav-progress"></div>
   <div class="app">
     <aside class="sidebar">
       <div class="sidebar-header">
@@ -325,8 +326,36 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
         });
       }
 
+      // Thin top progress bar so a soft-nav click gives some immediate feedback instead
+      // of appearing to do nothing until the fetch resolves.
+      var progressBar = document.getElementById("nav-progress");
+      var progressHideTimer;
+      function startProgress() {
+        if (!progressBar) return;
+        clearTimeout(progressHideTimer);
+        progressBar.style.transition = "none";
+        progressBar.style.width = "0%";
+        progressBar.classList.add("active");
+        progressBar.offsetHeight; // force reflow so the transition below animates from 0
+        progressBar.style.transition = "";
+        requestAnimationFrame(function () {
+          progressBar.style.width = "70%";
+        });
+      }
+      function finishProgress() {
+        if (!progressBar) return;
+        progressBar.style.width = "100%";
+        progressHideTimer = setTimeout(function () {
+          progressBar.classList.remove("active");
+          progressHideTimer = setTimeout(function () {
+            progressBar.style.width = "0%";
+          }, 300);
+        }, 150);
+      }
+
       window.navigate = function (url, push) {
         if (push === undefined) push = true;
+        startProgress();
         fetch(url)
           .then(function (res) {
             if (!res.ok) throw new Error("Navigation failed: " + res.status);
@@ -347,12 +376,29 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
             if (newSidebar) document.querySelector(".sidebar").innerHTML = newSidebar.innerHTML;
             if (push) window.history.pushState({}, "", url);
             window.scrollTo(0, 0);
+            finishProgress();
           })
           .catch(function (err) {
             console.error(err);
             window.location.href = url;
           });
       };
+
+      // Plain (non-JS-driven) forms just full-page-navigate on submit, giving no feedback
+      // that the click registered until the new page finishes loading. Disabling the
+      // submit button and appending "…" is a cheap universal fix — the reload that
+      // follows shortly after is what resets it, so there's no risk of it getting stuck.
+      // Forms with their own JS (e.g. Chat, in-person recording) already manage their
+      // button's disabled/text state directly, and this skips buttons already disabled.
+      document.addEventListener("submit", function (e) {
+        var form = e.target;
+        if (!(form instanceof HTMLFormElement) || e.defaultPrevented) return;
+        var submitter = e.submitter || form.querySelector('button[type="submit"]');
+        if (!submitter || submitter.disabled) return;
+        submitter.disabled = true;
+        submitter.dataset.originalText = submitter.textContent;
+        submitter.textContent = submitter.textContent.trim().replace(/…$/, "") + "…";
+      });
 
       document.addEventListener("click", function (e) {
         if (e.defaultPrevented || e.button !== 0) return;

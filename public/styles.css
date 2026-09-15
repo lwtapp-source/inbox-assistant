@@ -66,6 +66,22 @@
   box-sizing: border-box;
 }
 
+#nav-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  width: 0%;
+  background: var(--accent);
+  z-index: 9999;
+  opacity: 0;
+  transition: width 0.2s ease, opacity 0.3s ease;
+}
+
+#nav-progress.active {
+  opacity: 1;
+}
+
 html,
 body {
   margin: 0;
