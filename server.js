@@ -178,6 +178,13 @@ function escapeHtml(str) {
     .replace(/'/g, "&#39;");
 }
 
+// Appends a one-shot `toast` query param a redirect target carries into the next full
+// page load; the persistent client-side script in renderLayout reads it on load, shows
+// a transient notification, then strips it from the URL via history.replaceState.
+function withToast(url, message) {
+  return url + (url.includes("?") ? "&" : "?") + "toast=" + encodeURIComponent(message);
+}
+
 async function renderLayout({ title, activeAccountId, accounts, body, activePage }) {
   const { rows: pausedRows } = await pool.query(
     `SELECT COUNT(*)::int AS count FROM accounts WHERE active = false`
@@ -255,6 +262,7 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
 </head>
 <body>
   <div id="nav-progress"></div>
+  <div id="toast-container" aria-live="polite"></div>
   <div class="app">
     <aside class="sidebar">
       <div class="sidebar-header">
@@ -399,6 +407,31 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
         submitter.dataset.originalText = submitter.textContent;
         submitter.textContent = submitter.textContent.trim().replace(/…$/, "") + "…";
       });
+
+      // One-shot toast: a redirect can carry ?toast=<message> into the next full page
+      // load (see withToast() server-side). Shown once, then stripped from the URL so a
+      // refresh or share of the link doesn't repeat it.
+      (function () {
+        var params = new URLSearchParams(window.location.search);
+        var message = params.get("toast");
+        if (!message) return;
+        params.delete("toast");
+        var newSearch = params.toString();
+        window.history.replaceState({}, "", window.location.pathname + (newSearch ? "?" + newSearch : ""));
+
+        var container = document.getElementById("toast-container");
+        if (!container) return;
+        var toast = document.createElement("div");
+        toast.className = "toast";
+        toast.textContent = message;
+        container.appendChild(toast);
+        setTimeout(function () {
+          toast.classList.add("toast-fade-out");
+          setTimeout(function () {
+            toast.remove();
+          }, 300);
+        }, 2500);
+      })();
 
       document.addEventListener("click", function (e) {
         if (e.defaultPrevented || e.button !== 0) return;
@@ -1347,7 +1380,7 @@ app.post("/meetings/record", uploadAudioFile.single("audio"), async (req, res) =
 
 app.post("/meetings/:id/delete", async (req, res) => {
   await pool.query(`DELETE FROM meetings WHERE id = $1`, [req.params.id]);
-  res.redirect("/meetings");
+  res.redirect(withToast("/meetings", "Meeting deleted"));
 });
 
 app.post("/meetings/action-items/:id/toggle", async (req, res) => {
@@ -1839,17 +1872,17 @@ app.post("/invoices/scan", async (req, res) => {
 
 app.post("/invoices/:id/paid", async (req, res) => {
   await pool.query(`UPDATE invoices SET paid = true WHERE id = $1`, [req.params.id]);
-  res.redirect("/invoices");
+  res.redirect(withToast("/invoices", "Marked as paid"));
 });
 
 app.post("/invoices/:id/unpaid", async (req, res) => {
   await pool.query(`UPDATE invoices SET paid = false WHERE id = $1`, [req.params.id]);
-  res.redirect("/invoices");
+  res.redirect(withToast("/invoices", "Marked as unpaid"));
 });
 
 app.post("/invoices/:id/delete", async (req, res) => {
   await pool.query(`DELETE FROM invoices WHERE id = $1`, [req.params.id]);
-  res.redirect("/invoices");
+  res.redirect(withToast("/invoices", "Invoice deleted"));
 });
 
 // ---------- Chat (inbox search + draft-from-scratch) ----------
