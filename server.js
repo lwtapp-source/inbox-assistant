@@ -1119,9 +1119,11 @@ app.get("/", async (req, res) => {
         // purpose — a floating card positioned at hover-time stays put in the viewport
         // as the page scrolls, visually detaching from the row it belongs to; a panel
         // that's part of the list's own flow scrolls with it like everything else.
-        (function () {
+        // Exposed on the outer scope (not a plain IIFE) so the j/k keyboard navigation
+        // below can drive the same panel as the currently-selected row changes.
+        var rowPreview = (function () {
           var panel = document.getElementById("priority-preview");
-          if (!panel) return;
+          if (!panel) return { showFor: function () {} };
           var previewCache = {};
           var showTimer = null;
           var hideTimer = null;
@@ -1193,6 +1195,8 @@ app.get("/", async (req, res) => {
               scheduleHide();
             });
           });
+
+          return { showFor: showFor };
         })();
 
         // ---------- keyboard navigation (j/k/d/p/x/enter) ----------
@@ -1215,6 +1219,7 @@ app.get("/", async (req, res) => {
           selectedIndex = Math.max(0, Math.min(index, rows.length - 1));
           updateSelectionVisual();
           rows[selectedIndex].scrollIntoView({ block: "nearest" });
+          rowPreview.showFor(rows[selectedIndex]);
         }
 
         function currentRow() {
