@@ -669,7 +669,7 @@ app.get("/", async (req, res) => {
                    </form>`
             }
             <form method="POST" action="/priorities/${p.id}/delete" style="display:inline;">
-              <button type="submit" class="link-button danger">Delete</button>
+              <button type="submit" class="link-button danger" onclick="return confirm('Delete this priority? This only removes it from the dashboard — the original email stays in your inbox.');">Delete</button>
             </form>
           </div>
         </div>`
@@ -1070,7 +1070,7 @@ app.get("/meetings", async (req, res) => {
           <div class="priority-actions">
             ${m.status === "done" ? `<a href="/meetings/${m.id}">Open</a>` : ""}
             <form method="POST" action="/meetings/${m.id}/delete" style="display:inline;">
-              <button type="submit" class="link-button danger">Delete</button>
+              <button type="submit" class="link-button danger" onclick="return confirm('Permanently delete this meeting? The transcript and summary only exist here — this cannot be undone.');">Delete</button>
             </form>
           </div>
         </div>`;
@@ -1734,7 +1734,7 @@ app.get("/invoices", async (req, res) => {
                    </form>`
             }
             <form method="POST" action="/invoices/${inv.id}/delete" style="display:inline;">
-              <button type="submit" class="link-button danger">Delete</button>
+              <button type="submit" class="link-button danger" onclick="return confirm('Delete this invoice? This only removes it from tracking here — the original email stays in your inbox.');">Delete</button>
             </form>
           </div>
         </div>`
