@@ -1279,6 +1279,14 @@ app.get("/meetings/:id", async (req, res) => {
     timeZone: meeting.account_timezone || "America/New_York",
   });
 
+  // Only AssemblyAI's in-person path produces generic "Speaker A/B" labels (no calendar
+  // to pull real names from) — Recall.ai virtual-meeting transcripts already have real
+  // participant names from the platform. Once every occurrence of a label is renamed,
+  // this naturally stops matching it and the form no longer offers it.
+  const speakerLabels = [
+    ...new Set([...(meeting.transcript || "").matchAll(/^(Speaker \S+):/gm)].map((m) => m[1])),
+  ];
+
   const notDoneBody = `
     <a href="/meetings" class="eyebrow-link">← All meetings</a>
     <h1>${escapeHtml(meeting.title) || "(untitled meeting)"}</h1>
@@ -1346,6 +1354,33 @@ app.get("/meetings/:id", async (req, res) => {
       <h2>Action items</h2>
       ${actionItemsHtml}
     </div>
+
+    ${
+      speakerLabels.length
+        ? `<div class="section">
+             <h2>Rename speakers</h2>
+             <p class="section-help">
+               In-person recordings have no calendar to pull real names from, so speakers
+               show up generic. Give them real names — this updates every occurrence in
+               the transcript below (the summary won't reflect the change until you
+               regenerate it).
+             </p>
+             <form method="POST" action="/meetings/${meeting.id}/rename-speakers" style="display:flex; flex-direction:column; gap:8px; align-items:flex-start;">
+               ${speakerLabels
+                 .map(
+                   (label) => `
+                 <label style="display:flex; align-items:center; gap:8px; font-size:13.5px;">
+                   <span style="min-width:90px;">${escapeHtml(label)}</span>
+                   <input type="text" name="rename[${escapeHtml(label)}]" placeholder="Real name"
+                     style="padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:13.5px;" />
+                 </label>`
+                 )
+                 .join("")}
+               <button type="submit" style="margin-top:4px;">Apply renames</button>
+             </form>
+           </div>`
+        : ""
+    }
 
     <div class="section">
       <h2>Transcript</h2>
@@ -1443,6 +1478,32 @@ app.post("/meetings/:id/transcript", async (req, res) => {
     req.body.transcript ?? "",
     req.params.id,
   ]);
+  res.redirect(`/meetings/${req.params.id}?saved=1`);
+});
+
+// req.body.rename is { "Speaker A": "Sandy", ... } — express's urlencoded parser (extended:
+// true, already set globally) turns rename[Speaker A]=Sandy form fields into this directly.
+app.post("/meetings/:id/rename-speakers", async (req, res) => {
+  const renameMap = req.body.rename || {};
+  const { rows } = await pool.query(`SELECT transcript FROM meetings WHERE id = $1`, [
+    req.params.id,
+  ]);
+  const transcript = rows[0]?.transcript || "";
+
+  const renamed = transcript
+    .split("\n")
+    .map((line) => {
+      for (const [label, newName] of Object.entries(renameMap)) {
+        const trimmedName = newName?.trim();
+        if (trimmedName && line.startsWith(`${label}:`)) {
+          return `${trimmedName}:${line.slice(label.length + 1)}`;
+        }
+      }
+      return line;
+    })
+    .join("\n");
+
+  await pool.query(`UPDATE meetings SET transcript = $1 WHERE id = $2`, [renamed, req.params.id]);
   res.redirect(`/meetings/${req.params.id}?saved=1`);
 });
 
