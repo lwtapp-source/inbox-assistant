@@ -204,6 +204,27 @@ body {
   letter-spacing: -0.01em;
 }
 
+/* The tagline reads as part of the wordmark, not body copy: same serif, set in italic to
+   suggest motion/movement (per the phrase itself), quieter than --ink so "Sift" stays the
+   thing your eye lands on first. */
+.tagline {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-soft);
+  letter-spacing: 0.005em;
+}
+
+/* Fixed light-on-dark, like .wordmark's own default — the sidebar stays dark in both
+   themes (see --sidebar-bg), so this can't use --ink-soft the way the login/error page
+   tagline does. */
+.tagline-sidebar {
+  font-size: 10.5px;
+  color: #9aa39d;
+  margin-top: 2px;
+}
+
 .sidebar-header {
   display: flex;
   align-items: center;

@@ -98,7 +98,8 @@ function renderLoginPage(error) {
 </head>
 <body>
   <div style="max-width:360px; margin:14vh auto 0; padding:0 24px;">
-    <div class="wordmark" style="color:var(--ink); margin-bottom:28px;">Sift</div>
+    <div class="wordmark" style="color:var(--ink); margin-bottom:6px;">Sift</div>
+    <p class="tagline" style="margin:0 0 28px;">The motion of separating what matters from what doesn't.</p>
     <form method="POST" action="/login">
       ${error ? `<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">${error}</div><br/>` : ""}
       <p class="section-help" style="margin-top:0;">This tool manages real email and calendar access, so it's password-protected.</p>
@@ -180,7 +181,8 @@ function renderStandalonePage({ title, heading, message, linkHref, linkText }) {
 </head>
 <body>
   <div style="max-width:420px; margin:14vh auto 0; padding:0 24px;">
-    <div class="wordmark" style="color:var(--ink); margin-bottom:28px;">Sift</div>
+    <div class="wordmark" style="color:var(--ink); margin-bottom:6px;">Sift</div>
+    <p class="tagline" style="margin:0 0 28px;">The motion of separating what matters from what doesn't.</p>
     <h1 style="font-size:20px; margin-bottom:8px;">${escapeHtml(heading)}</h1>
     <p class="section-help" style="margin-top:0;">${escapeHtml(message)}</p>
     ${linkHref ? `<p><a href="${linkHref}">${escapeHtml(linkText || "Go back")}</a></p>` : ""}
@@ -301,7 +303,10 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
   <div class="app">
     <aside class="sidebar">
       <div class="sidebar-header">
-        <a href="/" style="text-decoration:none;"><div class="wordmark">Sift</div></a>
+        <a href="/" style="text-decoration:none;">
+          <div class="wordmark">Sift</div>
+          <div class="tagline tagline-sidebar">The motion of separating what matters from what doesn't.</div>
+        </a>
         <button type="button" id="sidebar-toggle" class="sidebar-toggle" aria-label="Toggle menu">☰</button>
       </div>
       <div class="cmdk-hint">Press <kbd>⌘K</kbd> to jump anywhere</div>
