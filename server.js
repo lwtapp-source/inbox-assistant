@@ -938,6 +938,7 @@ app.get("/", async (req, res) => {
       </div>
     </div>
 
+    <div id="priority-preview" class="priority-preview" hidden></div>
     <div class="priority-list">${priorityRows}</div>
 
     <div class="section" style="margin-top:12px;">
@@ -1098,9 +1099,14 @@ app.get("/", async (req, res) => {
 
         // ---------- hover preview ----------
         // Shows the message body (fetched fresh, same endpoint the viewer page uses) in
-        // a floating card while hovering a row, so you can skim without leaving the list.
+        // a panel docked at the top of the list while hovering a row, so you can skim
+        // without leaving the list. Docked (not a floating card following the row) on
+        // purpose — a floating card positioned at hover-time stays put in the viewport
+        // as the page scrolls, visually detaching from the row it belongs to; a panel
+        // that's part of the list's own flow scrolls with it like everything else.
         (function () {
-          var previewCard = null;
+          var panel = document.getElementById("priority-preview");
+          if (!panel) return;
           var previewCache = {};
           var showTimer = null;
           var hideTimer = null;
@@ -1111,33 +1117,22 @@ app.get("/", async (req, res) => {
             return div.innerHTML;
           }
 
-          function ensureCard() {
-            if (previewCard) return previewCard;
-            previewCard = document.createElement("div");
-            previewCard.className = "hover-preview";
-            previewCard.hidden = true;
-            document.body.appendChild(previewCard);
-            previewCard.addEventListener("mouseenter", function () { clearTimeout(hideTimer); });
-            previewCard.addEventListener("mouseleave", scheduleHide);
-            return previewCard;
-          }
-
           function scheduleHide() {
             clearTimeout(hideTimer);
             hideTimer = setTimeout(function () {
-              if (previewCard) previewCard.hidden = true;
+              panel.hidden = true;
             }, 200);
           }
 
-          function render(card, data) {
+          function render(data) {
             if (data.error) {
-              card.innerHTML = '<div class="hover-preview-error">' + escapeForHtml(data.error) + "</div>";
+              panel.innerHTML = '<div class="hover-preview-error">' + escapeForHtml(data.error) + "</div>";
               return;
             }
             var date = data.processedAt
               ? new Date(data.processedAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: data.timezone || "America/New_York" })
               : "";
-            card.innerHTML =
+            panel.innerHTML =
               '<div class="hover-preview-subject">' + escapeForHtml(data.subject) + "</div>" +
               '<div class="hover-preview-meta">' + escapeForHtml(data.fromAddress) + " · " + escapeForHtml(data.accountEmail) + (date ? " · " + date : "") + "</div>" +
               '<div class="hover-preview-body">' + escapeForHtml(data.body || "(empty message)") + "</div>";
@@ -1146,34 +1141,31 @@ app.get("/", async (req, res) => {
           function showFor(row) {
             var id = row.getAttribute("data-id");
             if (!id) return;
-            var card = ensureCard();
-
-            var rect = row.getBoundingClientRect();
-            card.style.top = rect.bottom + 6 + "px";
-            card.style.left = rect.left + "px";
-            card.style.width = rect.width + "px";
-            card.hidden = false;
-            card.dataset.forId = id;
+            panel.hidden = false;
+            panel.dataset.forId = id;
 
             if (previewCache[id]) {
-              render(card, previewCache[id]);
+              render(previewCache[id]);
               return;
             }
 
-            card.innerHTML = '<div class="hover-preview-meta">Loading…</div>';
+            panel.innerHTML = '<div class="hover-preview-meta">Loading…</div>';
             fetch("/priorities/" + id + "/preview")
               .then(function (res) { return res.json(); })
               .then(function (data) {
                 if (!data.ok) throw new Error("Not found");
                 previewCache[id] = data;
-                if (card.dataset.forId === id) render(card, data);
+                if (panel.dataset.forId === id) render(data);
               })
               .catch(function () {
-                if (card.dataset.forId === id) {
-                  card.innerHTML = '<div class="hover-preview-error">Could not load a preview.</div>';
+                if (panel.dataset.forId === id) {
+                  panel.innerHTML = '<div class="hover-preview-error">Could not load a preview.</div>';
                 }
               });
           }
+
+          panel.addEventListener("mouseenter", function () { clearTimeout(hideTimer); });
+          panel.addEventListener("mouseleave", scheduleHide);
 
           list.querySelectorAll(".priority-row").forEach(function (row) {
             row.addEventListener("mouseenter", function () {

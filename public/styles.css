@@ -298,19 +298,22 @@ body {
   display: none;
 }
 
-.hover-preview {
-  position: fixed;
-  z-index: 500;
+/* Docked at the top of the list (see server.js), not a floating card that tracks the
+   hovered row's position — that broke on scroll, since a position:fixed card stays put
+   in the viewport while the list (and the row it belongs to) scrolls away underneath. A
+   panel that's part of the list's own flow scrolls with it, so it never separates. */
+.priority-preview {
   max-height: 320px;
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
   padding: 14px 16px;
+  margin-bottom: 16px;
 }
 
-.hover-preview[hidden] {
+.priority-preview[hidden] {
   display: none;
 }
 
