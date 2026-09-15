@@ -224,15 +224,13 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${title} · Inbox Assistant</title>
   <script>
-    // Runs before the stylesheet loads so a saved theme choice applies with no flash of
-    // the wrong theme. Absent an explicit choice, the CSS media query handles system
-    // preference on its own — this only matters once the user has overridden it.
+    // Runs before the stylesheet loads so the theme applies with no flash of the wrong
+    // one. Defaults to dark until the user explicitly picks light via the toggle —
+    // system preference is not consulted for the default.
     (function () {
       try {
         var saved = localStorage.getItem("theme");
-        if (saved === "light" || saved === "dark") {
-          document.documentElement.setAttribute("data-theme", saved);
-        }
+        document.documentElement.setAttribute("data-theme", saved === "light" ? "light" : "dark");
       } catch (e) {}
     })();
   </script>
