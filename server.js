@@ -401,6 +401,11 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
         }, 150);
       }
 
+      // Tracks the path+query (never the hash) we last actually navigated to, so the
+      // popstate handler below can tell a real page change apart from a same-document
+      // fragment jump (see there for why that distinction matters).
+      var lastPathAndSearch = window.location.pathname + window.location.search;
+
       window.navigate = function (url, push) {
         if (push === undefined) push = true;
         startProgress();
@@ -423,6 +428,7 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
             runScripts(mainEl);
             if (newSidebar) document.querySelector(".sidebar").innerHTML = newSidebar.innerHTML;
             if (push) window.history.pushState({}, "", url);
+            lastPathAndSearch = window.location.pathname + window.location.search;
             window.scrollTo(0, 0);
             finishProgress();
           })
@@ -495,6 +501,15 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
       });
 
       window.addEventListener("popstate", function () {
+        // Most browsers also fire popstate for a same-document hash-only navigation —
+        // e.g. clicking one of the Settings page's #section jump-nav pills, which this
+        // click handler deliberately leaves alone above so the browser's native anchor
+        // scroll handles it. Re-running a full soft-nav swap for that would end with
+        // window.navigate's own scrollTo(0, 0), undoing the scroll the user just landed
+        // on the page for and yanking them back to the top a beat after arriving there.
+        var currentPathAndSearch = window.location.pathname + window.location.search;
+        if (currentPathAndSearch === lastPathAndSearch) return;
+        lastPathAndSearch = currentPathAndSearch;
         window.navigate(window.location.href, false);
       });
 
