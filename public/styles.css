@@ -198,10 +198,16 @@ body {
 .wordmark {
   font-family: "Fraunces", Georgia, serif;
   font-weight: 600;
-  font-size: 21px;
+  font-size: 24px;
   line-height: 1.2;
   color: #ffffff;
   letter-spacing: -0.01em;
+}
+
+/* Bigger brand moment on the login/error-page shell, where the wordmark stands alone
+   rather than sharing space with the sidebar's nav. */
+.wordmark-lg {
+  font-size: 38px;
 }
 
 /* The tagline reads as part of the wordmark, not body copy: same serif, set in italic to
@@ -210,19 +216,23 @@ body {
 .tagline {
   font-family: "Fraunces", Georgia, serif;
   font-style: italic;
-  font-size: 13px;
+  font-size: 14.5px;
   line-height: 1.4;
   color: var(--ink-soft);
   letter-spacing: 0.005em;
+}
+
+.tagline-lg {
+  font-size: 18px;
 }
 
 /* Fixed light-on-dark, like .wordmark's own default — the sidebar stays dark in both
    themes (see --sidebar-bg), so this can't use --ink-soft the way the login/error page
    tagline does. */
 .tagline-sidebar {
-  font-size: 10.5px;
+  font-size: 12px;
   color: #9aa39d;
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 .sidebar-header {
