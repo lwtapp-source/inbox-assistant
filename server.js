@@ -689,7 +689,10 @@ app.get("/", async (req, res) => {
   const rangeStart = totalCount === 0 ? 0 : offset + 1;
   const rangeEnd = Math.min(offset + PAGE_SIZE, totalCount);
 
-  function buildListUrl(targetPage) {
+  // Shared by buildListUrl below and by each row's "View" link — the viewer page needs
+  // the same view/filter/sort context to (a) walk Next/Previous in the same order the
+  // list is showing, and (b) send "Back to Top priorities" to the right page.
+  function buildContextParams(targetPage) {
     const params = new URLSearchParams();
     if (showDone) params.set("view", "done");
     if (req.query.filtered) {
@@ -698,9 +701,15 @@ app.get("/", async (req, res) => {
     }
     if (sort !== defaultSort) params.set("sort", sort);
     if (targetPage > 1) params.set("page", String(targetPage));
-    const qs = params.toString();
+    return params;
+  }
+
+  function buildListUrl(targetPage) {
+    const qs = buildContextParams(targetPage).toString();
     return qs ? `/?${qs}` : "/";
   }
+
+  const viewContextQS = buildContextParams(page).toString();
 
   // Unified dashboard: small at-a-glance widgets for the other sections, so the
   // home page doesn't require clicking into Meetings/Invoices just to see whether
@@ -758,7 +767,7 @@ app.get("/", async (req, res) => {
             ${p.snippet ? `<div class="priority-snippet">${escapeHtml(p.snippet)}</div>` : ""}
           </div>
           <div class="priority-actions">
-            <a href="/priorities/${p.id}/view">View</a>
+            <a href="/priorities/${p.id}/view${viewContextQS ? `?${viewContextQS}` : ""}">View</a>
             ${
               p.web_link
                 ? `<a href="${
@@ -1173,6 +1182,40 @@ function isAjax(req) {
 // session.
 app.get("/priorities/:id/view", async (req, res) => {
   const accounts = await getAccounts();
+
+  // Mirrors the home route's own view/filter/sort parsing, so Next/Previous walk the
+  // exact same ordered set the list the user came from was showing, and "Back" returns
+  // to the right page of it.
+  const allAccountIds = accounts.map((a) => a.id);
+  const showDone = req.query.view === "done";
+  let selectedAccountIds;
+  if (req.query.filtered) {
+    const raw = req.query.accounts;
+    const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    selectedAccountIds = list.map((s) => Number(s)).filter((n) => allAccountIds.includes(n));
+  } else {
+    selectedAccountIds = allAccountIds;
+  }
+  const VALID_SORTS = ["pinned", "newest", "oldest"];
+  const defaultSort = showDone ? "newest" : "pinned";
+  const sort = VALID_SORTS.includes(req.query.sort) ? req.query.sort : defaultSort;
+  const orderBy =
+    sort === "newest" ? "pm.processed_at DESC" :
+    sort === "oldest" ? "pm.processed_at ASC" :
+    "pm.pinned DESC, pm.processed_at DESC";
+
+  const contextParams = new URLSearchParams();
+  if (showDone) contextParams.set("view", "done");
+  if (req.query.filtered) {
+    contextParams.set("filtered", "1");
+    for (const id of selectedAccountIds) contextParams.append("accounts", String(id));
+  }
+  if (sort !== defaultSort) contextParams.set("sort", sort);
+  if (Number(req.query.page) > 1) contextParams.set("page", String(Number(req.query.page)));
+  const contextQS = contextParams.toString();
+  const backUrl = contextQS ? `/?${contextQS}` : "/";
+  const viewQS = contextQS ? `?${contextQS}` : "";
+
   const { rows } = await pool.query(
     `SELECT pm.*, a.email AS account_email, a.provider AS account_provider, a.timezone AS account_timezone
      FROM processed_messages pm
@@ -1187,10 +1230,29 @@ app.get("/priorities/:id/view", async (req, res) => {
         title: "Not found",
         activeAccountId: null,
         accounts,
-        body: `<h1>Not found</h1><p><a href="/">← Back to Top priorities</a></p>`,
+        body: `<h1>Not found</h1><p><a href="${backUrl}">← Back to Top priorities</a></p>`,
         activePage: "priorities",
       })
     );
+  }
+
+  // Walks the same ordered set the list is showing, not just the current page — cheap
+  // since it's an id-only query with no LIMIT, and bounded to urgent mail for whichever
+  // accounts are selected.
+  let prevId = null;
+  let nextId = null;
+  if (selectedAccountIds.length) {
+    const { rows: idRows } = await pool.query(
+      `SELECT pm.id
+       FROM processed_messages pm
+       WHERE pm.label = 'urgent' AND pm.done = $1 AND pm.account_id = ANY($2)
+       ORDER BY ${orderBy}`,
+      [showDone, selectedAccountIds]
+    );
+    const ids = idRows.map((r) => r.id);
+    const currentIndex = ids.indexOf(pm.id);
+    if (currentIndex > 0) prevId = ids[currentIndex - 1];
+    if (currentIndex >= 0 && currentIndex < ids.length - 1) nextId = ids[currentIndex + 1];
   }
 
   const { rows: accountRows } = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [pm.account_id]);
@@ -1218,7 +1280,21 @@ app.get("/priorities/:id/view", async (req, res) => {
     : null;
 
   const body = `
-    <p><a href="/">← Back to Top priorities</a></p>
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:4px;">
+      <a href="${backUrl}">← Back to Top priorities</a>
+      <div style="display:flex; gap:16px; align-items:center;">
+        ${
+          prevId
+            ? `<a href="/priorities/${prevId}/view${viewQS}">← Previous</a>`
+            : `<span class="section-help" style="margin:0; opacity:0.4;">← Previous</span>`
+        }
+        ${
+          nextId
+            ? `<a href="/priorities/${nextId}/view${viewQS}">Next →</a>`
+            : `<span class="section-help" style="margin:0; opacity:0.4;">Next →</span>`
+        }
+      </div>
+    </div>
     <h1>${escapeHtml(pm.subject) || "(no subject)"}</h1>
     <p class="priority-meta">${escapeHtml(pm.from_address)} · ${escapeHtml(pm.account_email)} · ${new Date(pm.processed_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: pm.account_timezone || "America/New_York" })}</p>
 
@@ -1255,6 +1331,20 @@ app.get("/priorities/:id/view", async (req, res) => {
              <p style="white-space:pre-wrap; border:1px solid var(--border); border-radius:var(--radius); padding:16px; background:var(--surface);">${escapeHtml(bodyText) || "(empty message)"}</p>
            </div>`
     }
+
+    <script>
+      (function () {
+        var nextUrl = ${nextId ? JSON.stringify(`/priorities/${nextId}/view${viewQS}`) : "null"};
+        var prevUrl = ${prevId ? JSON.stringify(`/priorities/${prevId}/view${viewQS}`) : "null"};
+        document.addEventListener("keydown", function (e) {
+          var tag = (e.target.tagName || "").toLowerCase();
+          if (tag === "input" || tag === "textarea" || tag === "select") return;
+          if (e.metaKey || e.ctrlKey || e.altKey) return;
+          if (e.key === "j" && nextUrl) window.navigate(nextUrl);
+          else if (e.key === "k" && prevUrl) window.navigate(prevUrl);
+        });
+      })();
+    </script>
   `;
 
   res.send(await renderLayout({ title: pm.subject || "Message", activeAccountId: null, accounts, body, activePage: "priorities" }));
