@@ -736,7 +736,8 @@ app.get("/", async (req, res) => {
     ? priorities
         .map(
           (p) => `
-        <div class="priority-row">
+        <div class="priority-row" data-id="${p.id}">
+          <input type="checkbox" class="bulk-select" aria-label="Select this priority" style="margin-top:3px;" />
           <div class="priority-main">
             <div class="priority-top">
               <span class="priority-subject">${escapeHtml(p.subject) || "(no subject)"}</span>
@@ -881,9 +882,27 @@ app.get("/", async (req, res) => {
     </form>
 
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
-      <span class="section-help" style="margin:0;">
-        ${totalCount === 0 ? "" : `Showing ${rangeStart}-${rangeEnd} of ${totalCount}`}
-      </span>
+      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        ${
+          priorities.length
+            ? `<label style="display:flex; align-items:center; gap:6px; font-size:13.5px; cursor:pointer;">
+                 <input type="checkbox" id="bulk-select-all" /> Select all
+               </label>`
+            : ""
+        }
+        <span class="section-help" style="margin:0;">
+          ${totalCount === 0 ? "" : `Showing ${rangeStart}-${rangeEnd} of ${totalCount}`}
+        </span>
+        <span id="bulk-toolbar" class="bulk-toolbar" hidden>
+          <span id="bulk-count" class="section-help" style="margin:0;"></span>
+          ${
+            showDone
+              ? `<button type="button" id="bulk-undone" class="link-button">Undo</button>`
+              : `<button type="button" id="bulk-done" class="link-button">Mark done</button>`
+          }
+          <button type="button" id="bulk-delete" class="link-button danger">Delete</button>
+        </span>
+      </div>
       <div style="display:flex; gap:16px; align-items:center;">
         ${
           page > 1
@@ -974,6 +993,87 @@ app.get("/", async (req, res) => {
             }
           });
         });
+
+        // ---------- bulk select ----------
+        var selectAllCheckbox = document.getElementById("bulk-select-all");
+        var bulkToolbar = document.getElementById("bulk-toolbar");
+        var bulkCount = document.getElementById("bulk-count");
+        var bulkDoneBtn = document.getElementById("bulk-done");
+        var bulkUndoneBtn = document.getElementById("bulk-undone");
+        var bulkDeleteBtn = document.getElementById("bulk-delete");
+
+        function getSelectedIds() {
+          return getRows()
+            .filter(function (row) {
+              var cb = row.querySelector(".bulk-select");
+              return cb && cb.checked;
+            })
+            .map(function (row) {
+              return row.getAttribute("data-id");
+            });
+        }
+
+        function updateBulkToolbar() {
+          var ids = getSelectedIds();
+          var allCheckboxes = getRows().map(function (row) { return row.querySelector(".bulk-select"); }).filter(Boolean);
+          if (bulkToolbar) bulkToolbar.hidden = ids.length === 0;
+          if (bulkCount) bulkCount.textContent = ids.length + " selected";
+          if (selectAllCheckbox) {
+            selectAllCheckbox.checked = allCheckboxes.length > 0 && ids.length === allCheckboxes.length;
+            selectAllCheckbox.indeterminate = ids.length > 0 && ids.length < allCheckboxes.length;
+          }
+        }
+
+        list.addEventListener("change", function (e) {
+          if (e.target.classList.contains("bulk-select")) updateBulkToolbar();
+        });
+
+        if (selectAllCheckbox) {
+          selectAllCheckbox.addEventListener("change", function () {
+            getRows().forEach(function (row) {
+              var cb = row.querySelector(".bulk-select");
+              if (cb) cb.checked = selectAllCheckbox.checked;
+            });
+            updateBulkToolbar();
+          });
+        }
+
+        async function runBulkAction(action) {
+          var ids = getSelectedIds();
+          if (!ids.length) return;
+          try {
+            var res = await fetch("/priorities/bulk", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ids: ids, action: action }),
+            });
+            if (!res.ok) throw new Error("Request failed: " + res.status);
+            ids.forEach(function (id) {
+              var row = list.querySelector('.priority-row[data-id="' + id + '"]');
+              if (row) row.remove();
+            });
+            showEmptyStateIfNeeded();
+            updateBulkToolbar();
+            selectRow(selectedIndex);
+          } catch (err) {
+            console.error(err);
+            alert("Something went wrong — please try again.");
+          }
+        }
+
+        if (bulkDoneBtn) bulkDoneBtn.addEventListener("click", function () { runBulkAction("done"); });
+        if (bulkUndoneBtn) bulkUndoneBtn.addEventListener("click", function () { runBulkAction("undone"); });
+        if (bulkDeleteBtn) {
+          bulkDeleteBtn.addEventListener("click", function () {
+            var ids = getSelectedIds();
+            if (!ids.length) return;
+            var confirmed = confirm(
+              "Delete " + ids.length + " selected item" + (ids.length === 1 ? "" : "s") +
+              "? This only removes them from the dashboard — the original emails stay in your inbox."
+            );
+            if (confirmed) runBulkAction("delete");
+          });
+        }
 
         // ---------- keyboard navigation (j/k/d/p/x/enter) ----------
         var selectedIndex = 0;
@@ -1077,6 +1177,22 @@ app.post("/priorities/:id/delete", async (req, res) => {
   await pool.query(`DELETE FROM processed_messages WHERE id = $1`, [req.params.id]);
   if (isAjax(req)) return res.sendStatus(200);
   res.redirect("/");
+});
+
+const BULK_ACTIONS = {
+  done: `UPDATE processed_messages SET done = true WHERE id = ANY($1)`,
+  undone: `UPDATE processed_messages SET done = false WHERE id = ANY($1)`,
+  delete: `DELETE FROM processed_messages WHERE id = ANY($1)`,
+};
+
+app.post("/priorities/bulk", express.json(), async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
+  const query = BULK_ACTIONS[req.body?.action];
+  if (!ids.length || !query) {
+    return res.status(400).json({ ok: false, error: "Invalid request" });
+  }
+  await pool.query(query, [ids]);
+  res.sendStatus(200);
 });
 
 app.post("/priorities/:id/draft", async (req, res) => {

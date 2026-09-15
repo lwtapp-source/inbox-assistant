@@ -257,6 +257,16 @@ body {
   display: none;
 }
 
+.bulk-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bulk-toolbar[hidden] {
+  display: none;
+}
+
 .cmdk-box {
   width: 100%;
   max-width: 520px;
