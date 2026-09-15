@@ -1029,6 +1029,8 @@ app.get("/meetings", async (req, res) => {
     <p class="subtitle">AI notetaker — sends a bot to record a meeting, then summarizes it with action items.</p>
 
     ${req.query.started ? `<div class="saved-banner">Notetaker is joining the meeting — summary appears here once the call ends (usually within a few minutes after).</div><br/>` : ""}
+    ${req.query.uploaded ? `<div class="saved-banner">Uploaded — transcribing now, check back in a few minutes.</div><br/>` : ""}
+    ${req.query.error ? `<div class="saved-banner" style="background:#f7e9e4; color:#8a3a20;">${escapeHtml(req.query.error)}</div><br/>` : ""}
 
     ${
       accounts.length
@@ -1055,6 +1057,21 @@ app.get("/meetings", async (req, res) => {
                <button type="button" id="record-stop-btn" style="display:none; background:var(--urgent);">⏹ Stop &amp; upload</button>
                <span id="record-status" class="section-help" style="margin:0;"></span>
              </div>
+           </div>
+
+           <div class="section" style="margin-top:4px; margin-bottom:20px;">
+             <h2 style="font-size:16px;">Or upload an existing recording</h2>
+             <p class="section-help">Any audio or video file — same transcription pipeline as above, just skips the live recording.</p>
+             <form method="POST" action="/meetings/record" enctype="multipart/form-data" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+               <input type="hidden" name="via" value="upload" />
+               <select name="account_id" required style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
+                 <option value="">Which account?</option>
+                 ${accounts.map((a) => `<option value="${a.id}">${escapeHtml(a.email)}</option>`).join("")}
+               </select>
+               <input type="text" name="title" placeholder="Meeting title (optional)" style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; min-width:200px;" />
+               <input type="file" name="audio" accept="audio/*,video/*" required />
+               <button type="submit">Upload &amp; transcribe</button>
+             </form>
            </div>`
         : `<div class="empty-state">Connect an account first from the home page before recording a meeting.</div>`
     }
@@ -1167,10 +1184,20 @@ app.post("/meetings/create", async (req, res) => {
   }
 });
 
+// Shared by two callers: the live-recording JS (fetch, expects a JSON response) and the
+// plain "upload an existing recording" form (native submit, expects a redirect) — the
+// hidden `via=upload` field is the only thing that tells them apart. The transcription
+// pipeline itself doesn't care where the audio came from.
 app.post("/meetings/record", uploadAudioFile.single("audio"), async (req, res) => {
-  const { account_id, title } = req.body;
+  const { account_id, title, via } = req.body;
+  const isUpload = via === "upload";
   try {
-    if (!req.file) return res.status(400).json({ ok: false, error: "No audio received" });
+    if (!req.file) {
+      if (isUpload) {
+        return res.redirect(`/meetings?error=${encodeURIComponent("No file received — please try again.")}`);
+      }
+      return res.status(400).json({ ok: false, error: "No audio received" });
+    }
 
     const { rows: accountRows } = await pool.query(
       `SELECT custom_vocabulary FROM accounts WHERE id = $1`,
@@ -1187,11 +1214,16 @@ app.post("/meetings/record", uploadAudioFile.single("audio"), async (req, res) =
     await pool.query(
       `INSERT INTO meetings (account_id, transcript_id, source, title, status)
        VALUES ($1, $2, 'in_person', $3, 'processing')`,
-      [account_id, transcriptId, title || "In-person recording"]
+      [account_id, transcriptId, title || (isUpload ? "Uploaded recording" : "In-person recording")]
     );
+
+    if (isUpload) return res.redirect("/meetings?uploaded=1");
     res.json({ ok: true });
   } catch (err) {
     console.error("Failed to submit in-person recording:", err.message);
+    if (isUpload) {
+      return res.redirect(`/meetings?error=${encodeURIComponent("Upload failed — please try again.")}`);
+    }
     res.status(500).json({ ok: false, error: err.message });
   }
 });
