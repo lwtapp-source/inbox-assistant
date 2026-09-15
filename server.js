@@ -85,7 +85,7 @@ function renderLoginPage(error) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sign in · Inbox Assistant</title>
+  <title>Sign in · Sift</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
@@ -93,10 +93,12 @@ function renderLoginPage(error) {
     rel="stylesheet"
   />
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="manifest" href="/manifest.json" />
 </head>
 <body>
   <div style="max-width:360px; margin:14vh auto 0; padding:0 24px;">
-    <div class="wordmark" style="color:var(--ink); margin-bottom:28px;">Inbox<br />Assistant</div>
+    <div class="wordmark" style="color:var(--ink); margin-bottom:28px;">Sift</div>
     <form method="POST" action="/login">
       ${error ? `<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">${error}</div><br/>` : ""}
       <p class="section-help" style="margin-top:0;">This tool manages real email and calendar access, so it's password-protected.</p>
@@ -165,7 +167,7 @@ function renderStandalonePage({ title, heading, message, linkHref, linkText }) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${escapeHtml(title)} · Inbox Assistant</title>
+  <title>${escapeHtml(title)} · Sift</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
@@ -173,10 +175,12 @@ function renderStandalonePage({ title, heading, message, linkHref, linkText }) {
     rel="stylesheet"
   />
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="manifest" href="/manifest.json" />
 </head>
 <body>
   <div style="max-width:420px; margin:14vh auto 0; padding:0 24px;">
-    <div class="wordmark" style="color:var(--ink); margin-bottom:28px;">Inbox<br />Assistant</div>
+    <div class="wordmark" style="color:var(--ink); margin-bottom:28px;">Sift</div>
     <h1 style="font-size:20px; margin-bottom:8px;">${escapeHtml(heading)}</h1>
     <p class="section-help" style="margin-top:0;">${escapeHtml(message)}</p>
     ${linkHref ? `<p><a href="${linkHref}">${escapeHtml(linkText || "Go back")}</a></p>` : ""}
@@ -269,7 +273,7 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${title} · Inbox Assistant</title>
+  <title>${title} · Sift</title>
   <script>
     // Runs before the stylesheet loads so the theme applies with no flash of the wrong
     // one. Defaults to dark until the user explicitly picks light via the toggle —
@@ -288,6 +292,8 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
     rel="stylesheet"
   />
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="manifest" href="/manifest.json" />
 </head>
 <body>
   <div id="nav-progress"></div>
@@ -295,7 +301,7 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
   <div class="app">
     <aside class="sidebar">
       <div class="sidebar-header">
-        <a href="/" style="text-decoration:none;"><div class="wordmark">Inbox<br />Assistant</div></a>
+        <a href="/" style="text-decoration:none;"><div class="wordmark">Sift</div></a>
         <button type="button" id="sidebar-toggle" class="sidebar-toggle" aria-label="Toggle menu">☰</button>
       </div>
       <div class="cmdk-hint">Press <kbd>⌘K</kbd> to jump anywhere</div>
@@ -1466,7 +1472,7 @@ app.get("/meetings", async (req, res) => {
 app.post("/meetings/create", async (req, res) => {
   const { account_id, meeting_url, title } = req.body;
   try {
-    const bot = await createBot({ meetingUrl: meeting_url, botName: "Inbox Assistant Notetaker" });
+    const bot = await createBot({ meetingUrl: meeting_url, botName: "Sift Notetaker" });
     await pool.query(
       `INSERT INTO meetings (account_id, bot_id, source, meeting_url, title, status)
        VALUES ($1, $2, 'recall', $3, $4, 'joining')`,
@@ -2944,16 +2950,16 @@ app.get("/settings/:id", async (req, res) => {
       ${
         account.active
           ? `<p class="section-help">
-              Stops Inbox Assistant from accessing ${account.email}. This does not send
-              anything or touch real email or calendar events — it only affects what Inbox
-              Assistant itself can see and do. To fully revoke access on
+              Stops Sift from accessing ${account.email}. This does not send
+              anything or touch real email or calendar events — it only affects what Sift
+              itself can see and do. To fully revoke access on
               ${account.provider === "google" ? "Google" : "Microsoft"}'s side too, visit
               <a href="${
                 account.provider === "google"
                   ? "https://myaccount.google.com/permissions"
                   : "https://account.live.com/consent/Manage"
               }" target="_blank" rel="noopener">${account.provider === "google" ? "Google account permissions" : "Microsoft account permissions"}</a>
-              and remove Inbox Assistant there as well.
+              and remove Sift there as well.
             </p>
             <form method="POST" action="/settings/${account.id}/disconnect" style="display:flex; gap:12px; flex-wrap:wrap;">
               <button type="submit" name="mode" value="keep"
@@ -3199,7 +3205,7 @@ async function processPendingBatches() {
 async function start() {
   await initSchema();
 
-  app.listen(PORT, () => console.log(`Inbox Assistant listening on :${PORT}`));
+  app.listen(PORT, () => console.log(`Sift listening on :${PORT}`));
 
   const intervalMs = (Number(process.env.POLL_INTERVAL_MINUTES) || 5) * 60 * 1000;
   setInterval(async () => {

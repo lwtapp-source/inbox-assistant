@@ -58,7 +58,7 @@ export async function createAppointmentEvent(account, detail, messageId, extract
       startIso: startDate.toISOString(),
       endIso: endDate.toISOString(),
       location: extracted.location || "",
-      description: `Auto-added by Inbox Assistant from an email from ${detail.from}.`,
+      description: `Auto-added by Sift from an email from ${detail.from}.`,
     });
 
     await pool.query(

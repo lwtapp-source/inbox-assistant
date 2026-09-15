@@ -1,4 +1,4 @@
-# Inbox Assistant (Fyxer-style, self-hosted on Render)
+# Sift (Fyxer-style, self-hosted on Render)
 
 Always-on service that:
 - Polls connected Gmail accounts for new mail

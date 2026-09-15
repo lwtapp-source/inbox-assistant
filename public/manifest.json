@@ -1,0 +1,11 @@
+{
+  "name": "Sift",
+  "short_name": "Sift",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "theme_color": "#2f6f5e",
+  "background_color": "#f7f7f4",
+  "display": "standalone",
+  "start_url": "/"
+}
