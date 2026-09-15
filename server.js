@@ -1260,6 +1260,16 @@ app.get("/", async (req, res) => {
 
         selectRow(0);
 
+        // Clicking a row selects it the same way j/k does, so the highlight (shared with
+        // :hover in CSS) sticks after the mouse moves away instead of only showing while
+        // actually hovering.
+        list.addEventListener("click", function (e) {
+          var row = e.target.closest(".priority-row");
+          if (!row) return;
+          var idx = getRows().indexOf(row);
+          if (idx !== -1) selectRow(idx);
+        });
+
         document.addEventListener("keydown", function (e) {
           var tag = (e.target.tagName || "").toLowerCase();
           if (tag === "input" || tag === "textarea" || tag === "select") return;
@@ -1413,7 +1423,7 @@ app.get("/priorities/:id/view", async (req, res) => {
     : null;
 
   const body = `
-    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:4px;">
+    <div class="no-print" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:4px;">
       <a href="${backUrl}">← Back to Top priorities</a>
       <div style="display:flex; gap:16px; align-items:center;">
         ${
@@ -1431,7 +1441,8 @@ app.get("/priorities/:id/view", async (req, res) => {
     <h1>${escapeHtml(pm.subject) || "(no subject)"}</h1>
     <p class="priority-meta">${escapeHtml(pm.from_address)} · ${escapeHtml(pm.account_email)} · ${new Date(pm.processed_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: pm.account_timezone || "America/New_York" })}</p>
 
-    <div class="priority-actions" style="margin:16px 0 20px;">
+    <div class="priority-actions no-print" style="margin:16px 0 20px;">
+      <button type="button" class="link-button" onclick="window.print()">Print</button>
       ${openLink ? `<a href="${openLink}" target="_blank" rel="noopener">Open in ${pm.account_provider === "outlook" ? "Outlook" : "Gmail"}</a>` : ""}
       ${
         !pm.done

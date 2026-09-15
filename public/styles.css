@@ -876,7 +876,8 @@ button[type="submit"].link-button.danger:hover {
   border-top: none;
 }
 
-.priority-row.selected {
+.priority-row.selected,
+.priority-row:hover {
   background: var(--accent-wash);
   border-radius: var(--radius);
   padding-left: 12px;
@@ -1078,5 +1079,37 @@ input[type="file"] {
   50% {
     opacity: 0.35;
     transform: scale(0.7);
+  }
+}
+
+/* Printing a message (the "Print" button on the in-app viewer) should produce just the
+   subject/meta/body, not the app chrome around it — and always on white/black regardless
+   of the current theme, since dark-mode colors printed as-is would waste a page of ink
+   on a near-black background. */
+@media print {
+  .sidebar,
+  .no-print,
+  #nav-progress,
+  #toast-container {
+    display: none !important;
+  }
+  .app {
+    display: block;
+  }
+  .main {
+    max-width: 100%;
+    padding: 0;
+  }
+  body {
+    background: #ffffff;
+    color: #000000;
+  }
+  /* The message body box (inline-styled with the current theme's surface/border colors)
+     would otherwise print as a dark or tinted box depending on theme. */
+  .section p {
+    background: none !important;
+    border: none !important;
+    color: #000000 !important;
+    padding: 0 !important;
   }
 }
