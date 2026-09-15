@@ -261,6 +261,19 @@ body {
   font-weight: 500;
 }
 
+/* Sidebar stays dark in both themes (see --sidebar-bg), so this uses fixed light-on-dark
+   colors rather than the CSS variables the rest of the app themes with. */
+.nav-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #e8eae7;
+  background: rgba(255, 255, 255, 0.14);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
 .account-dot {
   width: 7px;
   height: 7px;

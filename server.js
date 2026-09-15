@@ -190,6 +190,16 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
     `SELECT id, email FROM accounts WHERE active = true AND last_poll_error IS NOT NULL`
   );
 
+  // Sidebar activity badges: neither invoices nor meetings has a read/unread flag, so
+  // these count whatever currently needs attention instead — unpaid invoices, and
+  // meetings a bot is actively joining/recording.
+  const { rows: [invoiceBadge] } = await pool.query(
+    `SELECT COUNT(*)::int AS count FROM invoices WHERE paid = false`
+  );
+  const { rows: [meetingBadge] } = await pool.query(
+    `SELECT COUNT(*)::int AS count FROM meetings WHERE status IN ('joining', 'recording')`
+  );
+
   const navLinks = accounts.length
     ? accounts
         .map(
@@ -262,8 +272,8 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
         <div class="nav-label">Tools</div>
         <a href="/" class="account-link ${activePage === "priorities" ? "active" : ""}">🗂️ Priorities</a>
         <a href="/chat" class="account-link ${activePage === "chat" ? "active" : ""}">💬 Chat</a>
-        <a href="/invoices" class="account-link ${activePage === "invoices" ? "active" : ""}">🧾 Invoices</a>
-        <a href="/meetings" class="account-link ${activePage === "meetings" ? "active" : ""}">🎙️ Meetings</a>
+        <a href="/invoices" class="account-link ${activePage === "invoices" ? "active" : ""}">🧾 Invoices${invoiceBadge.count ? `<span class="nav-badge">${invoiceBadge.count}</span>` : ""}</a>
+        <a href="/meetings" class="account-link ${activePage === "meetings" ? "active" : ""}">🎙️ Meetings${meetingBadge.count ? `<span class="nav-badge">${meetingBadge.count}</span>` : ""}</a>
       </nav>
       <nav class="account-nav">
         <div class="nav-label">Accounts</div>
