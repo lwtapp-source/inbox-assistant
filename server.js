@@ -1129,6 +1129,7 @@ app.get("/", async (req, res) => {
         var rowPreview = (function () {
           var previewCache = {};
           var openEl = null;
+          var openRow = null;
           var showTimer = null;
           var hideTimer = null;
 
@@ -1142,12 +1143,18 @@ app.get("/", async (req, res) => {
             return list.querySelector('.priority-row-preview[data-preview-for="' + id + '"]');
           }
 
+          // Keeps the row's own highlight (shared with :hover/.selected) applied for as
+          // long as its preview is open — otherwise it'd clear the moment the mouse moves
+          // off the row and onto the preview text below it, breaking the seam between the
+          // two right when you're reading the expanded content.
           function close() {
+            if (openRow) openRow.classList.remove("expanded");
             if (openEl) {
               openEl.hidden = true;
               openEl.innerHTML = "";
-              openEl = null;
             }
+            openEl = null;
+            openRow = null;
           }
 
           function scheduleClose() {
@@ -1160,13 +1167,10 @@ app.get("/", async (req, res) => {
               el.innerHTML = '<div class="hover-preview-error">' + escapeForHtml(data.error) + "</div>";
               return;
             }
-            var date = data.processedAt
-              ? new Date(data.processedAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: data.timezone || "America/New_York" })
-              : "";
-            el.innerHTML =
-              '<div class="hover-preview-subject">' + escapeForHtml(data.subject) + "</div>" +
-              '<div class="hover-preview-meta">' + escapeForHtml(data.fromAddress) + " · " + escapeForHtml(data.accountEmail) + (date ? " · " + date : "") + "</div>" +
-              '<div class="hover-preview-body">' + escapeForHtml(data.body || "(empty message)") + "</div>";
+            // Subject/from/account/date are already shown in the row itself right above
+            // this — repeating them here would just be a second header on top of the
+            // same text the user is already looking at.
+            el.innerHTML = '<div class="hover-preview-body">' + escapeForHtml(data.body || "(empty message)") + "</div>";
           }
 
           function showFor(row) {
@@ -1179,8 +1183,11 @@ app.get("/", async (req, res) => {
             if (openEl && openEl !== el) {
               openEl.hidden = true;
               openEl.innerHTML = "";
+              if (openRow) openRow.classList.remove("expanded");
             }
             openEl = el;
+            openRow = row;
+            row.classList.add("expanded");
             el.hidden = false;
             el.dataset.forId = id;
 
@@ -1189,7 +1196,7 @@ app.get("/", async (req, res) => {
               return;
             }
 
-            el.innerHTML = '<div class="hover-preview-meta">Loading…</div>';
+            el.innerHTML = '<div class="hover-preview-body">Loading…</div>';
             fetch("/priorities/" + id + "/preview")
               .then(function (res) { return res.json(); })
               .then(function (data) {
