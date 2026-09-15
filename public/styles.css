@@ -297,11 +297,13 @@ body {
   display: none;
 }
 
-/* Docked at the top of the list (see server.js), not a floating card that tracks the
-   hovered row's position — that broke on scroll, since a position:fixed card stays put
-   in the viewport while the list (and the row it belongs to) scrolls away underneath. A
-   panel that's part of the list's own flow scrolls with it, so it never separates. */
-.priority-preview {
+/* One of these sits right after each .priority-row (see server.js) and expands in place
+   when that row is hovered/selected — anchored to that specific row, not a floating card
+   (which stayed put in the viewport while the row scrolled away underneath it, visually
+   detaching the two) and not a single panel docked at the top of the list (which was
+   anchored to the list, not to whichever row you were actually looking at). Being the
+   row's own next sibling, it scrolls with that exact row like any other content. */
+.priority-row-preview {
   max-height: 320px;
   overflow-y: auto;
   background: var(--surface);
@@ -309,10 +311,10 @@ body {
   border-radius: var(--radius);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
   padding: 14px 16px;
-  margin-bottom: 16px;
+  margin: -4px 0 12px;
 }
 
-.priority-preview[hidden] {
+.priority-row-preview[hidden] {
   display: none;
 }
 

@@ -817,7 +817,8 @@ app.get("/", async (req, res) => {
               <button type="submit" class="link-button danger" onclick="return confirm('Delete this priority? This only removes it from the dashboard — the original email stays in your inbox.');">Delete</button>
             </form>
           </div>
-        </div>`
+        </div>
+        <div class="priority-row-preview" data-preview-for="${p.id}" hidden></div>`
         )
         .join("")
     : `<div class="empty-state" style="padding:20px 0;">${
@@ -953,7 +954,6 @@ app.get("/", async (req, res) => {
       </div>
     </div>
 
-    <div id="priority-preview" class="priority-preview" hidden></div>
     <div class="priority-list">${priorityRows}</div>
 
     <div class="section" style="margin-top:12px;">
@@ -1008,14 +1008,18 @@ app.get("/", async (req, res) => {
                   newBadge.textContent = "Pinned";
                   top.appendChild(newBadge);
                   submitBtn.textContent = "Unpin";
+                  var ownPreview = list.querySelector('.priority-row-preview[data-preview-for="' + row.getAttribute("data-id") + '"]');
                   list.prepend(row);
+                  if (ownPreview) row.insertAdjacentElement("afterend", ownPreview);
                 }
                 if (submitBtn) submitBtn.disabled = false;
                 updateSelectionVisual();
               } else {
                 // done / undone / delete all remove the row from this view
                 var wasSelected = row.classList.contains("selected");
+                var ownPreviewEl = list.querySelector('.priority-row-preview[data-preview-for="' + row.getAttribute("data-id") + '"]');
                 row.remove();
+                if (ownPreviewEl) ownPreviewEl.remove();
                 showEmptyStateIfNeeded();
                 if (wasSelected) selectRow(selectedIndex);
                 else updateSelectionVisual();
@@ -1088,6 +1092,8 @@ app.get("/", async (req, res) => {
             ids.forEach(function (id) {
               var row = list.querySelector('.priority-row[data-id="' + id + '"]');
               if (row) row.remove();
+              var previewEl = list.querySelector('.priority-row-preview[data-preview-for="' + id + '"]');
+              if (previewEl) previewEl.remove();
             });
             showEmptyStateIfNeeded();
             updateBulkToolbar();
@@ -1114,17 +1120,15 @@ app.get("/", async (req, res) => {
 
         // ---------- hover preview ----------
         // Shows the message body (fetched fresh, same endpoint the viewer page uses) in
-        // a panel docked at the top of the list while hovering a row, so you can skim
-        // without leaving the list. Docked (not a floating card following the row) on
-        // purpose — a floating card positioned at hover-time stays put in the viewport
-        // as the page scrolls, visually detaching from the row it belongs to; a panel
-        // that's part of the list's own flow scrolls with it like everything else.
+        // a slot that expands directly under the hovered/selected row itself — anchored
+        // to that specific row, not to the top of the whole list, so it's always exactly
+        // where you're looking and scrolls with that row like any other content. Only
+        // one is open at a time; opening a new one closes whichever was open before.
         // Exposed on the outer scope (not a plain IIFE) so the j/k keyboard navigation
-        // below can drive the same panel as the currently-selected row changes.
+        // below can drive the same preview as the currently-selected row changes.
         var rowPreview = (function () {
-          var panel = document.getElementById("priority-preview");
-          if (!panel) return { showFor: function () {} };
           var previewCache = {};
+          var openEl = null;
           var showTimer = null;
           var hideTimer = null;
 
@@ -1134,55 +1138,71 @@ app.get("/", async (req, res) => {
             return div.innerHTML;
           }
 
-          function scheduleHide() {
-            clearTimeout(hideTimer);
-            hideTimer = setTimeout(function () {
-              panel.hidden = true;
-            }, 200);
+          function findPreviewEl(id) {
+            return list.querySelector('.priority-row-preview[data-preview-for="' + id + '"]');
           }
 
-          function render(data) {
+          function close() {
+            if (openEl) {
+              openEl.hidden = true;
+              openEl.innerHTML = "";
+              openEl = null;
+            }
+          }
+
+          function scheduleClose() {
+            clearTimeout(hideTimer);
+            hideTimer = setTimeout(close, 200);
+          }
+
+          function render(el, data) {
             if (data.error) {
-              panel.innerHTML = '<div class="hover-preview-error">' + escapeForHtml(data.error) + "</div>";
+              el.innerHTML = '<div class="hover-preview-error">' + escapeForHtml(data.error) + "</div>";
               return;
             }
             var date = data.processedAt
               ? new Date(data.processedAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: data.timezone || "America/New_York" })
               : "";
-            panel.innerHTML =
+            el.innerHTML =
               '<div class="hover-preview-subject">' + escapeForHtml(data.subject) + "</div>" +
               '<div class="hover-preview-meta">' + escapeForHtml(data.fromAddress) + " · " + escapeForHtml(data.accountEmail) + (date ? " · " + date : "") + "</div>" +
               '<div class="hover-preview-body">' + escapeForHtml(data.body || "(empty message)") + "</div>";
           }
 
           function showFor(row) {
+            if (!row) return;
             var id = row.getAttribute("data-id");
             if (!id) return;
-            panel.hidden = false;
-            panel.dataset.forId = id;
+            var el = findPreviewEl(id);
+            if (!el) return;
+
+            if (openEl && openEl !== el) {
+              openEl.hidden = true;
+              openEl.innerHTML = "";
+            }
+            openEl = el;
+            el.hidden = false;
+            el.dataset.forId = id;
 
             if (previewCache[id]) {
-              render(previewCache[id]);
+              render(el, previewCache[id]);
               return;
             }
 
-            panel.innerHTML = '<div class="hover-preview-meta">Loading…</div>';
+            el.innerHTML = '<div class="hover-preview-meta">Loading…</div>';
             fetch("/priorities/" + id + "/preview")
               .then(function (res) { return res.json(); })
               .then(function (data) {
                 if (!data.ok) throw new Error("Not found");
                 previewCache[id] = data;
-                if (panel.dataset.forId === id) render(data);
+                if (el.dataset.forId === id) render(el, data);
               })
               .catch(function () {
-                if (panel.dataset.forId === id) {
-                  panel.innerHTML = '<div class="hover-preview-error">Could not load a preview.</div>';
+                if (el.dataset.forId === id) {
+                  el.innerHTML = '<div class="hover-preview-error">Could not load a preview.</div>';
                 }
               });
           }
-
-          panel.addEventListener("mouseenter", function () { clearTimeout(hideTimer); });
-          panel.addEventListener("mouseleave", scheduleHide);
 
           list.querySelectorAll(".priority-row").forEach(function (row) {
             row.addEventListener("mouseenter", function () {
@@ -1192,8 +1212,13 @@ app.get("/", async (req, res) => {
             });
             row.addEventListener("mouseleave", function () {
               clearTimeout(showTimer);
-              scheduleHide();
+              scheduleClose();
             });
+          });
+
+          list.querySelectorAll(".priority-row-preview").forEach(function (el) {
+            el.addEventListener("mouseenter", function () { clearTimeout(hideTimer); });
+            el.addEventListener("mouseleave", scheduleClose);
           });
 
           return { showFor: showFor };
