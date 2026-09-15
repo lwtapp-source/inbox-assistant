@@ -156,6 +156,35 @@ app.get("/logout", (req, res) => {
   req.session.destroy(() => res.redirect("/login"));
 });
 
+// Standalone page shell for OAuth callback results, the 500 handler, and anywhere else
+// that needs a styled response without depending on a session or a DB round-trip (the
+// 500 handler in particular has to render even if the thing that broke was the database).
+function renderStandalonePage({ title, heading, message, linkHref, linkText }) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)} · Inbox Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div style="max-width:420px; margin:14vh auto 0; padding:0 24px;">
+    <div class="wordmark" style="color:var(--ink); margin-bottom:28px;">Inbox<br />Assistant</div>
+    <h1 style="font-size:20px; margin-bottom:8px;">${escapeHtml(heading)}</h1>
+    <p class="section-help" style="margin-top:0;">${escapeHtml(message)}</p>
+    ${linkHref ? `<p><a href="${linkHref}">${escapeHtml(linkText || "Go back")}</a></p>` : ""}
+  </div>
+</body>
+</html>`;
+}
+
 app.use((req, res, next) => {
   if (req.path === "/health" || req.path === "/poll") return next();
   if (req.session?.authenticated) return next();
@@ -2288,14 +2317,29 @@ app.get("/auth/google/callback", async (req, res) => {
   try {
     const account = await handleGoogleCallback(req.query.code);
     res.send(
-      `Connected ${account.email}. Sorting your recent inbox now as a background batch job — results appear over the next while (usually well under an hour). You can close this tab.`
+      renderStandalonePage({
+        title: "Connected",
+        heading: `Connected ${account.email}`,
+        message:
+          "Sorting your recent inbox now as a background batch job — results appear over the next while (usually well under an hour). You can close this tab.",
+        linkHref: "/",
+        linkText: "Go to dashboard",
+      })
     );
     bulkSortRecent(account).catch((err) =>
       console.error(`Bulk sort failed for ${account.email}:`, err)
     );
   } catch (err) {
     console.error(err);
-    res.status(500).send("OAuth failed: " + err.message);
+    res.status(500).send(
+      renderStandalonePage({
+        title: "Connection failed",
+        heading: "Couldn't connect that account",
+        message: "OAuth failed: " + err.message,
+        linkHref: "/",
+        linkText: "Back to dashboard",
+      })
+    );
   }
 });
 
@@ -2307,14 +2351,29 @@ app.get("/auth/outlook/callback", async (req, res) => {
   try {
     const account = await handleOutlookCallback(req.query.code);
     res.send(
-      `Connected ${account.email}. Sorting your recent inbox now as a background batch job — results appear over the next while (usually well under an hour). You can close this tab.`
+      renderStandalonePage({
+        title: "Connected",
+        heading: `Connected ${account.email}`,
+        message:
+          "Sorting your recent inbox now as a background batch job — results appear over the next while (usually well under an hour). You can close this tab.",
+        linkHref: "/",
+        linkText: "Go to dashboard",
+      })
     );
     bulkSortRecent(account).catch((err) =>
       console.error(`Bulk sort failed for ${account.email}:`, err)
     );
   } catch (err) {
     console.error(err);
-    res.status(500).send("OAuth failed: " + err.message);
+    res.status(500).send(
+      renderStandalonePage({
+        title: "Connection failed",
+        heading: "Couldn't connect that account",
+        message: "OAuth failed: " + err.message,
+        linkHref: "/",
+        linkText: "Back to dashboard",
+      })
+    );
   }
 });
 
@@ -2949,6 +3008,53 @@ app.post("/settings/:id", async (req, res) => {
     ]
   );
   res.redirect(`/settings/${req.params.id}?saved=1`);
+});
+
+// ---------- 404 / error pages ----------
+// Registered after every real route, so these only run when nothing above matched (404)
+// or a route handler threw/called next(err) (500). The auth-gate middleware near the top
+// already redirects unauthenticated requests to /login before they'd ever reach here, so
+// a 404 here means a signed-in user hit a genuinely bad URL.
+
+app.use(async (req, res) => {
+  try {
+    const accounts = await getAccounts();
+    const body = `
+      <h1>Page not found</h1>
+      <p class="subtitle">There's nothing at ${escapeHtml(req.path)}.</p>
+      <p><a href="/">Back to Top priorities →</a></p>
+    `;
+    res.status(404).send(await renderLayout({ title: "Not found", activeAccountId: null, accounts, body, activePage: null }));
+  } catch (err) {
+    // If even fetching accounts for the sidebar fails, fall back to the plain page shell
+    // rather than compounding a DB problem into a broken error page too.
+    res.status(404).send(
+      renderStandalonePage({
+        title: "Not found",
+        heading: "Page not found",
+        message: `There's nothing at ${req.path}.`,
+        linkHref: "/",
+        linkText: "Back to dashboard",
+      })
+    );
+  }
+});
+
+// Express only routes here for a synchronous throw or an explicit next(err) — an async
+// route handler's rejected promise still needs its own try/catch to reach this (Express
+// 4 doesn't auto-forward those). Kept DB-free and dependency-free on purpose: this is
+// what has to render even if the thing that broke was the database itself.
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  res.status(500).send(
+    renderStandalonePage({
+      title: "Something went wrong",
+      heading: "Something went wrong",
+      message: "An unexpected error occurred. Try again, or head back to the dashboard.",
+      linkHref: "/",
+      linkText: "Back to dashboard",
+    })
+  );
 });
 
 // ---------- Batch job processing ----------
