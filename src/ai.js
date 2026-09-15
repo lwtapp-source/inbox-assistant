@@ -240,6 +240,44 @@ ${context}`,
   return msg.content[0]?.text ?? "";
 }
 
+// Same prompt as answerFromSearch, but yields the answer as it's generated instead of
+// waiting for the full response — used by the Chat page's streaming JS fetch, so the
+// answer appears token-by-token rather than as a single delayed block.
+export async function* answerFromSearchStream({ question, results }) {
+  const context = results.length
+    ? results
+        .map(
+          (r, i) =>
+            `[${i + 1}] From: ${r.from} | Subject: ${r.subject} | Date: ${r.date}\n${r.snippet}`
+        )
+        .join("\n\n")
+    : "No matching emails were found.";
+
+  const stream = anthropic.messages.stream({
+    model: MODEL,
+    max_tokens: 500,
+    messages: [
+      {
+        role: "user",
+        content: `Answer this question using the email search results below. Cite which
+email(s) you're drawing from by their [number]. If the results don't answer the question,
+say so plainly rather than guessing.
+
+QUESTION: ${question}
+
+SEARCH RESULTS:
+${context}`,
+      },
+    ],
+  });
+
+  for await (const event of stream) {
+    if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
+      yield event.delta.text;
+    }
+  }
+}
+
 // Drafts a brand-new email (not a reply), using the same voice/tone/files context as regular
 // drafts, but no incoming email to respond to — just plain-language instructions.
 export async function draftFromScratch({

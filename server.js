@@ -28,6 +28,7 @@ import {
   classifyChatIntent,
   extractDraftRequest,
   answerFromSearch,
+  answerFromSearchStream,
   draftFromScratch,
   summarizeMeeting,
   translateText,
@@ -1790,6 +1791,66 @@ app.post("/chat/build-index", async (req, res) => {
   res.redirect("/chat?indexing=1");
 });
 
+// Shared by both chat endpoints: does everything up to (but not including) generating the
+// search answer text, since the streaming endpoint needs to send sources to the client
+// before the answer itself starts arriving. Returns either a finished result ({type:
+// "draft_created" | "draft_needs_clarification"}), or {type: "search", question, sources}
+// for the caller to answer (streamed or not).
+async function resolveChatIntent(account, provider, message) {
+  const intent = await classifyChatIntent(message);
+
+  if (intent === "search") {
+    let searchResults = await searchSimilar(account.id, message, 8);
+    if (!searchResults) {
+      // No embeddings indexed yet (or semantic search isn't configured) — fall
+      // back to the provider's native keyword search.
+      searchResults = provider.searchMessages
+        ? await provider.searchMessages(account, message, 8)
+        : [];
+    }
+    return { type: "search", question: message, sources: searchResults };
+  }
+
+  const extracted = await extractDraftRequest(message);
+  let to = extracted.recipientName?.trim() ?? "";
+
+  if (to && !to.includes("@") && provider.findEmailAddressForName) {
+    const resolved = await provider.findEmailAddressForName(account, to);
+    if (!resolved) {
+      return { type: "draft_needs_clarification", recipientName: to };
+    }
+    to = resolved;
+  }
+
+  if (!to || !to.includes("@")) {
+    return { type: "draft_needs_clarification", recipientName: to };
+  }
+
+  const filesContext = await getCustomFilesContext(account.id);
+  const bodyText = await draftFromScratch({
+    voiceProfile: account.voice_profile,
+    toneInstructions: account.tone_instructions,
+    filesContext,
+    instructions: extracted.instructions || message,
+    learnedStyleNotes: account.learned_style_notes,
+  });
+  const finalBody = account.signature?.trim()
+    ? `${bodyText}\n\n${account.signature.trim()}`
+    : bodyText;
+  const created = await provider.createNewDraft(account, {
+    to,
+    subject: extracted.subject || "(no subject)",
+    body: finalBody,
+  });
+  return {
+    type: "draft_created",
+    to,
+    subject: extracted.subject || "(no subject)",
+    body: finalBody,
+    webLink: created.webLink,
+  };
+}
+
 app.post("/chat", async (req, res) => {
   const accounts = await getAccounts();
   const accountId = req.body.account_id;
@@ -1808,64 +1869,10 @@ app.post("/chat", async (req, res) => {
     result = { error: "Pick an account and enter a question or request." };
   } else {
     try {
-      const intent = await classifyChatIntent(message);
-
-      if (intent === "search") {
-        let searchResults = await searchSimilar(account.id, message, 8);
-        if (!searchResults) {
-          // No embeddings indexed yet (or semantic search isn't configured) — fall
-          // back to the provider's native keyword search.
-          searchResults = provider.searchMessages
-            ? await provider.searchMessages(account, message, 8)
-            : [];
-        }
-        const answer = await answerFromSearch({ question: message, results: searchResults });
-        result = { type: "search", answer, sources: searchResults };
-      } else {
-        const extracted = await extractDraftRequest(message);
-        let to = extracted.recipientName?.trim() ?? "";
-
-        if (to && !to.includes("@") && provider.findEmailAddressForName) {
-          const resolved = await provider.findEmailAddressForName(account, to);
-          if (!resolved) {
-            result = {
-              type: "draft_needs_clarification",
-              recipientName: to,
-            };
-          } else {
-            to = resolved;
-          }
-        }
-
-        if (!result) {
-          if (!to || !to.includes("@")) {
-            result = { type: "draft_needs_clarification", recipientName: to };
-          } else {
-            const filesContext = await getCustomFilesContext(account.id);
-            const bodyText = await draftFromScratch({
-              voiceProfile: account.voice_profile,
-              toneInstructions: account.tone_instructions,
-              filesContext,
-              instructions: extracted.instructions || message,
-              learnedStyleNotes: account.learned_style_notes,
-            });
-            const finalBody = account.signature?.trim()
-              ? `${bodyText}\n\n${account.signature.trim()}`
-              : bodyText;
-            const created = await provider.createNewDraft(account, {
-              to,
-              subject: extracted.subject || "(no subject)",
-              body: finalBody,
-            });
-            result = {
-              type: "draft_created",
-              to,
-              subject: extracted.subject || "(no subject)",
-              body: finalBody,
-              webLink: created.webLink,
-            };
-          }
-        }
+      result = await resolveChatIntent(account, provider, message);
+      if (result.type === "search") {
+        const answer = await answerFromSearch({ question: message, results: result.sources });
+        result = { type: "search", answer, sources: result.sources };
       }
     } catch (err) {
       console.error("Chat request failed:", err);
@@ -1875,6 +1882,46 @@ app.post("/chat", async (req, res) => {
 
   const body = renderChatPage({ accounts, selectedAccountId: accountId, message, result });
   res.send(await renderLayout({ title: "Chat", activeAccountId: null, accounts, body, activePage: "chat" }));
+});
+
+// JS-driven counterpart to POST /chat above, used by the Chat page's fetch-based form
+// handler so the search-answer text can stream in token-by-token instead of only
+// appearing once the full response is ready. Draft requests have no meaningful streaming
+// benefit (the whole point is the finished draft), so those still come back as one JSON
+// blob, same shape as the non-streaming route's `result`.
+app.post("/chat/ask", express.json(), async (req, res) => {
+  const accountId = req.body?.account_id;
+  const message = (req.body?.message ?? "").trim();
+
+  const { rows } = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [accountId]);
+  const account = rows[0];
+  const provider = account ? chatProviders[account.provider] : null;
+
+  if (!account || !provider || !message) {
+    return res.status(400).json({ error: "Pick an account and enter a question or request." });
+  }
+
+  try {
+    const resolved = await resolveChatIntent(account, provider, message);
+    if (resolved.type !== "search") {
+      return res.json(resolved);
+    }
+
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("X-Chat-Sources", encodeURIComponent(JSON.stringify(resolved.sources)));
+    res.flushHeaders();
+    for await (const chunk of answerFromSearchStream({ question: message, results: resolved.sources })) {
+      res.write(chunk);
+    }
+    res.end();
+  } catch (err) {
+    console.error("Chat request failed:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Something went wrong: " + err.message });
+    } else {
+      res.end();
+    }
+  }
 });
 
 function renderChatPage({ accounts, selectedAccountId, message, result, indexing }) {
@@ -1934,10 +1981,10 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
 
     ${indexing ? `<div class="saved-banner">Building the search index in the background — check back in a few minutes.</div><br/>` : ""}
 
-    <form method="POST" action="/chat">
+    <form method="POST" action="/chat" id="chat-form">
       <div class="section" style="padding-top:0; border-top:none;">
         <h2>Which inbox?</h2>
-        <select name="account_id" required style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
+        <select name="account_id" id="chat-account" required style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
           <option value="">Choose an account</option>
           ${accountOptions}
         </select>
@@ -1948,9 +1995,9 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
           Examples: "Find the email thread about the marketing proposal" or "Draft an email
           to sarah@example.com about rescheduling Thursday's appointment."
         </p>
-        <textarea name="message" rows="4">${escapeHtml(message) ?? ""}</textarea>
+        <textarea name="message" id="chat-message" rows="4">${escapeHtml(message) ?? ""}</textarea>
       </div>
-      <button type="submit">Ask</button>
+      <button type="submit" id="chat-submit">Ask</button>
     </form>
 
     <div class="section">
@@ -1974,7 +2021,139 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
       </form>
     </div>
 
-    ${resultHtml}
+    <div id="chat-result">${resultHtml}</div>
+
+    <script>
+      (function () {
+        var form = document.getElementById("chat-form");
+        if (!form || !window.fetch || !window.ReadableStream) return; // no-JS/old-browser fallback: plain form POST to /chat
+
+        var resultEl = document.getElementById("chat-result");
+
+        function escapeForHtml(s) {
+          var div = document.createElement("div");
+          div.textContent = s == null ? "" : s;
+          return div.innerHTML;
+        }
+
+        function renderJsonResult(data, ok) {
+          if (!ok || data.error) {
+            resultEl.innerHTML =
+              '<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">' +
+              escapeForHtml(data.error || "Something went wrong.") +
+              "</div>";
+          } else if (data.type === "draft_needs_clarification") {
+            resultEl.innerHTML =
+              '<div class="section"><h2>Need a bit more detail</h2><p class="section-help">' +
+              "I couldn't find a clear, unambiguous email address for " +
+              (data.recipientName ? '"' + escapeForHtml(data.recipientName) + '"' : "the recipient") +
+              '. Try again with their full email address included, e.g. "Draft an email to ' +
+              'thomas@example.com about the property viewing on Monday."' +
+              "</p></div>";
+          } else if (data.type === "draft_created") {
+            resultEl.innerHTML =
+              '<div class="section"><h2>Draft created</h2><p class="section-help">To: ' +
+              escapeForHtml(data.to) +
+              " · Subject: " +
+              escapeForHtml(data.subject) +
+              "</p>" +
+              '<p style="white-space:pre-wrap; border:1px solid var(--border); border-radius:var(--radius); padding:14px; background:var(--surface);">' +
+              escapeForHtml(data.body) +
+              "</p>" +
+              (data.webLink
+                ? '<p><a href="' + data.webLink + '" target="_blank" rel="noopener">Open Drafts →</a></p>'
+                : "") +
+              "</div>";
+          }
+        }
+
+        function streamAnswer(res, sources) {
+          var sourcesHtml = sources.length
+            ? "<h2 style=\\"margin-top:18px;\\">Sources</h2><div class=\\"file-list\\">" +
+              sources
+                .map(function (s, i) {
+                  return (
+                    '<div class="file-row"><div><div class="file-name">[' +
+                    (i + 1) +
+                    "] " +
+                    escapeForHtml(s.subject || "(no subject)") +
+                    '</div><div class="file-meta">' +
+                    escapeForHtml(s.from) +
+                    " · " +
+                    escapeForHtml(s.date) +
+                    "</div></div>" +
+                    (s.webLink ? '<a href="' + s.webLink + '" target="_blank" rel="noopener">Open</a>' : "") +
+                    "</div>"
+                  );
+                })
+                .join("") +
+              "</div>"
+            : "";
+
+          resultEl.innerHTML = '<div class="section"><h2>Answer</h2><p id="chat-answer-text" style="white-space:pre-wrap;"></p>' + sourcesHtml + "</div>";
+          var answerEl = document.getElementById("chat-answer-text");
+
+          var reader = res.body.getReader();
+          var decoder = new TextDecoder();
+          var full = "";
+          function pump() {
+            return reader.read().then(function (step) {
+              if (step.done) return;
+              full += decoder.decode(step.value, { stream: true });
+              answerEl.textContent = full;
+              return pump();
+            });
+          }
+          return pump();
+        }
+
+        form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          var accountId = document.getElementById("chat-account").value;
+          var message = document.getElementById("chat-message").value.trim();
+          if (!accountId || !message) {
+            resultEl.innerHTML =
+              '<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">Pick an account and enter a question or request.</div>';
+            return;
+          }
+
+          var submitBtn = document.getElementById("chat-submit");
+          submitBtn.disabled = true;
+          submitBtn.textContent = "Asking…";
+          resultEl.innerHTML = '<div class="section"><p class="section-help">Thinking…</p></div>';
+
+          fetch("/chat/ask", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ account_id: accountId, message: message }),
+          })
+            .then(function (res) {
+              var ctype = res.headers.get("Content-Type") || "";
+              if (ctype.indexOf("application/json") !== -1) {
+                return res.json().then(function (data) {
+                  renderJsonResult(data, res.ok);
+                });
+              }
+              var sourcesHeader = res.headers.get("X-Chat-Sources");
+              var sources = [];
+              try {
+                sources = sourcesHeader ? JSON.parse(decodeURIComponent(sourcesHeader)) : [];
+              } catch (err) {}
+              return streamAnswer(res, sources);
+            })
+            .catch(function (err) {
+              resultEl.innerHTML =
+                '<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">Something went wrong: ' +
+                escapeForHtml(err.message) +
+                "</div>";
+            })
+            .then(function () {
+              submitBtn.disabled = false;
+              submitBtn.textContent = "Ask";
+            });
+        });
+      })();
+    </script>
   `;
 }
 
