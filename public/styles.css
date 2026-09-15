@@ -298,6 +298,44 @@ body {
   display: none;
 }
 
+.hover-preview {
+  position: fixed;
+  z-index: 500;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  padding: 14px 16px;
+}
+
+.hover-preview[hidden] {
+  display: none;
+}
+
+.hover-preview-subject {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.hover-preview-meta {
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  margin-bottom: 10px;
+}
+
+.hover-preview-body {
+  white-space: pre-wrap;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.hover-preview-error {
+  color: var(--error-ink);
+  font-size: 13.5px;
+}
+
 .cmdk-box {
   width: 100%;
   max-width: 520px;

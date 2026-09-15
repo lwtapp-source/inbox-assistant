@@ -1096,6 +1096,98 @@ app.get("/", async (req, res) => {
           });
         }
 
+        // ---------- hover preview ----------
+        // Shows the message body (fetched fresh, same endpoint the viewer page uses) in
+        // a floating card while hovering a row, so you can skim without leaving the list.
+        (function () {
+          var previewCard = null;
+          var previewCache = {};
+          var showTimer = null;
+          var hideTimer = null;
+
+          function escapeForHtml(s) {
+            var div = document.createElement("div");
+            div.textContent = s == null ? "" : s;
+            return div.innerHTML;
+          }
+
+          function ensureCard() {
+            if (previewCard) return previewCard;
+            previewCard = document.createElement("div");
+            previewCard.className = "hover-preview";
+            previewCard.hidden = true;
+            document.body.appendChild(previewCard);
+            previewCard.addEventListener("mouseenter", function () { clearTimeout(hideTimer); });
+            previewCard.addEventListener("mouseleave", scheduleHide);
+            return previewCard;
+          }
+
+          function scheduleHide() {
+            clearTimeout(hideTimer);
+            hideTimer = setTimeout(function () {
+              if (previewCard) previewCard.hidden = true;
+            }, 200);
+          }
+
+          function render(card, data) {
+            if (data.error) {
+              card.innerHTML = '<div class="hover-preview-error">' + escapeForHtml(data.error) + "</div>";
+              return;
+            }
+            var date = data.processedAt
+              ? new Date(data.processedAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: data.timezone || "America/New_York" })
+              : "";
+            card.innerHTML =
+              '<div class="hover-preview-subject">' + escapeForHtml(data.subject) + "</div>" +
+              '<div class="hover-preview-meta">' + escapeForHtml(data.fromAddress) + " · " + escapeForHtml(data.accountEmail) + (date ? " · " + date : "") + "</div>" +
+              '<div class="hover-preview-body">' + escapeForHtml(data.body || "(empty message)") + "</div>";
+          }
+
+          function showFor(row) {
+            var id = row.getAttribute("data-id");
+            if (!id) return;
+            var card = ensureCard();
+
+            var rect = row.getBoundingClientRect();
+            card.style.top = rect.bottom + 6 + "px";
+            card.style.left = rect.left + "px";
+            card.style.width = rect.width + "px";
+            card.hidden = false;
+            card.dataset.forId = id;
+
+            if (previewCache[id]) {
+              render(card, previewCache[id]);
+              return;
+            }
+
+            card.innerHTML = '<div class="hover-preview-meta">Loading…</div>';
+            fetch("/priorities/" + id + "/preview")
+              .then(function (res) { return res.json(); })
+              .then(function (data) {
+                if (!data.ok) throw new Error("Not found");
+                previewCache[id] = data;
+                if (card.dataset.forId === id) render(card, data);
+              })
+              .catch(function () {
+                if (card.dataset.forId === id) {
+                  card.innerHTML = '<div class="hover-preview-error">Could not load a preview.</div>';
+                }
+              });
+          }
+
+          list.querySelectorAll(".priority-row").forEach(function (row) {
+            row.addEventListener("mouseenter", function () {
+              clearTimeout(hideTimer);
+              clearTimeout(showTimer);
+              showTimer = setTimeout(function () { showFor(row); }, 350);
+            });
+            row.addEventListener("mouseleave", function () {
+              clearTimeout(showTimer);
+              scheduleHide();
+            });
+          });
+        })();
+
         // ---------- keyboard navigation (j/k/d/p/x/enter) ----------
         var selectedIndex = 0;
 
@@ -1171,6 +1263,26 @@ app.get("/", async (req, res) => {
 
 function isAjax(req) {
   return req.get("X-Requested-With") === "fetch";
+}
+
+// Shared by the full-page viewer (GET /priorities/:id/view) and the hover-preview
+// endpoint (GET /priorities/:id/preview) — fetches the body fresh from the provider
+// rather than storing it, same reasoning as the viewer route below.
+async function fetchPriorityBody(pm) {
+  const { rows: accountRows } = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [pm.account_id]);
+  const account = accountRows[0];
+  const provider = account ? chatProviders[account.provider] : null;
+
+  if (!account || !provider) {
+    return { bodyText: "", fetchError: "This account is no longer connected." };
+  }
+  try {
+    const detail = await provider.getMessageDetail(account, pm.message_id);
+    return { bodyText: detail.body || "", fetchError: null };
+  } catch (err) {
+    console.error("Failed to fetch message body:", err.message);
+    return { bodyText: "", fetchError: "Couldn't load the full message right now — try Open instead." };
+  }
 }
 
 // In-app message viewer — fetches the body fresh from the provider on every view rather
@@ -1255,23 +1367,7 @@ app.get("/priorities/:id/view", async (req, res) => {
     if (currentIndex >= 0 && currentIndex < ids.length - 1) nextId = ids[currentIndex + 1];
   }
 
-  const { rows: accountRows } = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [pm.account_id]);
-  const account = accountRows[0];
-  const provider = account ? chatProviders[account.provider] : null;
-
-  let bodyText = "";
-  let fetchError = null;
-  if (account && provider) {
-    try {
-      const detail = await provider.getMessageDetail(account, pm.message_id);
-      bodyText = detail.body || "";
-    } catch (err) {
-      console.error("Failed to fetch message body for viewer:", err.message);
-      fetchError = "Couldn't load the full message right now — try Open instead.";
-    }
-  } else {
-    fetchError = "This account is no longer connected.";
-  }
+  const { bodyText, fetchError } = await fetchPriorityBody(pm);
 
   const openLink = pm.web_link
     ? pm.account_provider === "outlook"
@@ -1348,6 +1444,32 @@ app.get("/priorities/:id/view", async (req, res) => {
   `;
 
   res.send(await renderLayout({ title: pm.subject || "Message", activeAccountId: null, accounts, body, activePage: "priorities" }));
+});
+
+// JSON counterpart to the viewer, for the Top Priorities list's hover-to-preview card —
+// same body-fetch as the full page, without a page navigation.
+app.get("/priorities/:id/preview", async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT pm.*, a.email AS account_email, a.timezone AS account_timezone
+     FROM processed_messages pm
+     JOIN accounts a ON a.id = pm.account_id
+     WHERE pm.id = $1`,
+    [req.params.id]
+  );
+  const pm = rows[0];
+  if (!pm) return res.status(404).json({ ok: false, error: "Not found" });
+
+  const { bodyText, fetchError } = await fetchPriorityBody(pm);
+  res.json({
+    ok: true,
+    subject: pm.subject || "(no subject)",
+    fromAddress: pm.from_address || "",
+    accountEmail: pm.account_email || "",
+    processedAt: pm.processed_at,
+    timezone: pm.account_timezone || "America/New_York",
+    body: bodyText,
+    error: fetchError,
+  });
 });
 
 app.post("/priorities/:id/done", async (req, res) => {
