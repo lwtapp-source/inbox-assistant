@@ -227,8 +227,19 @@ body {
 .sidebar {
   width: 248px;
   flex-shrink: 0;
-  position: relative;
-  overflow: hidden;
+  /* Without this, .app's flex align-items: stretch (the default) makes the sidebar
+     match main's full height -- on a long list page that's several thousand pixels, so
+     the gradient below (defined as 0%-60% of the element's own height) spreads across
+     nearly a whole page-scroll's worth of distance and reads as flat within any single
+     screenful. Pinning to one viewport height keeps the gradient the same on every page
+     regardless of how long that page's content is, and keeps nav visible while a long
+     list scrolls, which is the more expected behavior for a sidebar anyway. */
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
   background: linear-gradient(180deg, color-mix(in srgb, var(--sidebar-bg) 82%, white) 0%, var(--sidebar-bg) 60%);
   color: #eef1ef;
   padding: 28px 20px;
@@ -1637,6 +1648,17 @@ input[type="file"] {
   }
   .sidebar {
     width: auto;
+    /* The sticky/100vh treatment above is a desktop-only fix (see its comment) -- on a
+       stacked mobile layout it would pin the sidebar at a full screen tall above the
+       content, reintroducing the exact "scroll past everything before you see the
+       page" bug the collapsible nav below was built to avoid. Stays "relative" rather
+       than "static", though -- .grain-field is positioned absolute against whichever
+       ancestor is actually positioned, and "static" would kick that up to the whole
+       document, scattering the drifting dots across the entire page instead of
+       clipping them to the sidebar. */
+    position: relative;
+    height: auto;
+    overflow: visible;
   }
   .main {
     padding: 28px 20px;
