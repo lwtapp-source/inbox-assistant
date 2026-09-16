@@ -66,6 +66,24 @@
   box-sizing: border-box;
 }
 
+/* Global default for any plain <a> without its own color rule (page nav like "View
+   completed →", pagination, "Back to..."). Without this they fell back to the browser's
+   hardcoded default link blue/purple, which isn't theme-aware and reads poorly against
+   the dark background — --accent-dark already flips correctly for dark mode and is what
+   every other link in the app (.priority-actions a, etc.) already uses. A more specific
+   selector elsewhere still wins over this. */
+a {
+  color: var(--accent-dark);
+}
+
+a:visited {
+  color: var(--accent-dark);
+}
+
+a:hover {
+  color: var(--accent);
+}
+
 #nav-progress {
   position: fixed;
   top: 0;
