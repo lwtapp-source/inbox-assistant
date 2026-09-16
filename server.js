@@ -275,8 +275,9 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
     : `<div class="empty-note">No accounts yet</div>`;
 
   const paletteDestinations = [
-    { label: "Top priorities", hint: "Home", url: "/" },
-    { label: "Completed items", hint: "Top priorities", url: "/?view=done" },
+    { label: "Home", hint: "Dashboard", url: "/" },
+    { label: "Top priorities", hint: "Every urgent email", url: "/priorities" },
+    { label: "Completed items", hint: "Top priorities", url: "/priorities?view=done" },
     { label: "Chat", hint: "Search inbox or draft from scratch", url: "/chat" },
     { label: "Invoices", hint: "Unpaid", url: "/invoices" },
     { label: "Meetings", hint: "AI notetaker", url: "/meetings" },
@@ -344,7 +345,8 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
       <div class="sidebar-collapsible">
         <nav class="account-nav">
           <div class="nav-label">Tools</div>
-          <a href="/" class="account-link ${activePage === "priorities" ? "active" : ""}">🗂️ Priorities</a>
+          <a href="/" class="account-link ${activePage === "home" ? "active" : ""}">🏠 Home</a>
+          <a href="/priorities" class="account-link ${activePage === "priorities" ? "active" : ""}">🗂️ Priorities</a>
           <a href="/chat" class="account-link ${activePage === "chat" ? "active" : ""}">💬 Chat</a>
           <a href="/invoices" class="account-link ${activePage === "invoices" ? "active" : ""}">🧾 Invoices${invoiceBadge.count ? `<span class="nav-badge">${invoiceBadge.count}</span>` : ""}</a>
           <a href="/meetings" class="account-link ${activePage === "meetings" ? "active" : ""}">🎙️ Meetings${meetingBadge.count ? `<span class="nav-badge">${meetingBadge.count}</span>` : ""}</a>
@@ -684,8 +686,152 @@ async function getDisconnectedAccounts() {
 }
 
 // ---------- Home ----------
+// A bento-grid overview across every section, so nothing requires clicking in just to
+// see whether something's waiting there. Top Priorities is a stat tile like Invoices and
+// Meetings, not a preview list -- the actual list lives on its own page (/priorities),
+// so this page and that one don't show the same content twice.
 
 app.get("/", async (req, res) => {
+  const accounts = await getAccounts();
+  const allAccountIds = accounts.map((a) => a.id);
+
+  const { rows: [priorityCount] } = await pool.query(
+    `SELECT COUNT(*)::int AS count FROM processed_messages WHERE label = 'urgent' AND done = false`
+  );
+  const { rows: [invoiceSummary] } = await pool.query(
+    `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount), 0)::float AS total
+     FROM invoices WHERE paid = false`
+  );
+  const { rows: [meetingSummary] } = await pool.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE status IN ('joining', 'recording'))::int AS in_progress,
+       (SELECT title FROM meetings ORDER BY started_at DESC LIMIT 1) AS latest_title,
+       (SELECT started_at FROM meetings ORDER BY started_at DESC LIMIT 1) AS latest_started_at
+     FROM meetings`
+  );
+  const fmtUsd = (n) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
+
+  const CATEGORY_ORDER = [
+    { label: "urgent", name: "Urgent", varName: "--urgent" },
+    { label: "fyi", name: "FYI", varName: "--fyi" },
+    { label: "marketing", name: "Marketing", varName: "--marketing" },
+    { label: "notifications", name: "Notifications", varName: "--notifications" },
+    { label: "invoices", name: "Invoices", varName: "--invoice" },
+  ];
+  const { rows: categoryCounts } = await pool.query(
+    `SELECT label, COUNT(*)::int AS count
+     FROM processed_messages
+     WHERE processed_at > now() - interval '7 days' AND account_id = ANY($1)
+     GROUP BY label`,
+    [allAccountIds]
+  );
+  const categoryCountByLabel = Object.fromEntries(categoryCounts.map((r) => [r.label, r.count]));
+  const maxCategoryCount = Math.max(1, ...CATEGORY_ORDER.map((c) => categoryCountByLabel[c.label] || 0));
+
+  const { rows: pollHealthAccounts } = await pool.query(
+    `SELECT id, email, last_poll_success_at, last_poll_error FROM accounts WHERE active = true ORDER BY created_at`
+  );
+  function timeAgo(date) {
+    const ms = Date.now() - new Date(date).getTime();
+    const mins = Math.round(ms / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins} min ago`;
+    const hours = Math.round(mins / 60);
+    if (hours < 24) return `${hours} hr ago`;
+    return `${Math.round(hours / 24)}d ago`;
+  }
+
+  const body = `
+    <h1>Home</h1>
+    <p class="subtitle">At a glance across every connected inbox.</p>
+
+    <div class="bento">
+      <a class="tile tile-stat" href="/priorities">
+        <div class="tile-eyebrow">Top priorities</div>
+        <div class="stat-row">
+          <div>
+            <span class="stat-value">${priorityCount.count}</span><span class="stat-unit">urgent</span>
+            <div class="stat-sub">${priorityCount.count ? "Needs a reply" : "Nothing waiting on you"}</div>
+          </div>
+          <div class="stat-icon">🗂️</div>
+        </div>
+      </a>
+
+      <a class="tile tile-stat" href="/invoices">
+        <div class="tile-eyebrow">Invoices</div>
+        <div class="stat-row">
+          <div>
+            <span class="stat-value">${invoiceSummary.count}</span><span class="stat-unit">unpaid</span>
+            <div class="stat-sub">${invoiceSummary.count ? `${fmtUsd(invoiceSummary.total)} due` : "all caught up"}</div>
+          </div>
+          <div class="stat-icon">$</div>
+        </div>
+      </a>
+
+      <a class="tile tile-stat" href="/meetings">
+        <div class="tile-eyebrow">Meetings</div>
+        <div class="stat-row">
+          <div>
+            <span class="stat-value">${meetingSummary.in_progress || "—"}</span>
+            <div class="stat-sub">${
+              meetingSummary.in_progress
+                ? `${meetingSummary.in_progress} recording now`
+                : meetingSummary.latest_title
+                ? `Last: ${escapeHtml(meetingSummary.latest_title)}`
+                : "None yet"
+            }</div>
+          </div>
+          <div class="stat-icon">◐</div>
+        </div>
+      </a>
+
+      <a class="tile tile-chat" href="/chat">
+        <div>
+          <h2>Chat</h2>
+          <p>Ask a question across your inboxes, check your calendar, or draft something new.</p>
+        </div>
+        <div class="chat-cta">Ask Sift →</div>
+      </a>
+
+      <section class="tile tile-categories">
+        <div class="tile-eyebrow">Last 7 days, by category</div>
+        ${CATEGORY_ORDER.map((c) => {
+          const count = categoryCountByLabel[c.label] || 0;
+          const pct = Math.round((count / maxCategoryCount) * 100);
+          return `
+        <div class="cat-row">
+          <div class="cat-label">${c.name}</div>
+          <div class="cat-track"><div class="cat-fill" style="width:${pct}%; background:var(${c.varName});"></div></div>
+          <div class="cat-count">${count}</div>
+        </div>`;
+        }).join("")}
+      </section>
+
+      <section class="tile tile-accounts">
+        <div class="tile-eyebrow">Connected accounts</div>
+        ${
+          pollHealthAccounts.length
+            ? pollHealthAccounts
+                .map(
+                  (a) => `
+        <div class="acct-row">
+          <div class="acct-dot ${a.last_poll_error ? "warn" : "ok"}"></div>
+          <div class="acct-email">${escapeHtml(a.email)}</div>
+          <div class="acct-status">${a.last_poll_error ? "Poll failing" : a.last_poll_success_at ? timeAgo(a.last_poll_success_at) : "Not yet polled"}</div>
+        </div>`
+                )
+                .join("")
+            : `<p class="section-help" style="margin:0;">No accounts connected yet.</p>`
+        }
+      </section>
+    </div>`;
+
+  res.send(await renderLayout({ title: "Home", activeAccountId: null, accounts, body, activePage: "home" }));
+});
+
+// ---------- Top priorities ----------
+
+app.get("/priorities", async (req, res) => {
   const accounts = await getAccounts();
   const showDone = req.query.view === "done";
 
@@ -760,153 +906,10 @@ app.get("/", async (req, res) => {
 
   function buildListUrl(targetPage) {
     const qs = buildContextParams(targetPage).toString();
-    return qs ? `/?${qs}` : "/";
+    return qs ? `/priorities?${qs}` : "/priorities";
   }
 
   const viewContextQS = buildContextParams(page).toString();
-
-  // Unified dashboard: a bento grid of at-a-glance tiles for the other sections, so the
-  // home page doesn't require clicking into Meetings/Invoices just to see whether
-  // anything's waiting there. Top Priorities gets the largest tile since it's the thing
-  // actually opened and acted on every day; the full sortable/filterable list still
-  // renders below unchanged — this is a glanceable preview, not a replacement for it.
-  const { rows: [invoiceSummary] } = await pool.query(
-    `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount), 0)::float AS total
-     FROM invoices WHERE paid = false`
-  );
-  const { rows: [meetingSummary] } = await pool.query(
-    `SELECT
-       COUNT(*) FILTER (WHERE status IN ('joining', 'recording'))::int AS in_progress,
-       (SELECT title FROM meetings ORDER BY started_at DESC LIMIT 1) AS latest_title,
-       (SELECT started_at FROM meetings ORDER BY started_at DESC LIMIT 1) AS latest_started_at
-     FROM meetings`
-  );
-  const fmtUsd = (n) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
-
-  const CATEGORY_ORDER = [
-    { label: "urgent", name: "Urgent", varName: "--urgent" },
-    { label: "fyi", name: "FYI", varName: "--fyi" },
-    { label: "marketing", name: "Marketing", varName: "--marketing" },
-    { label: "notifications", name: "Notifications", varName: "--notifications" },
-    { label: "invoices", name: "Invoices", varName: "--invoice" },
-  ];
-  const { rows: categoryCounts } = await pool.query(
-    `SELECT label, COUNT(*)::int AS count
-     FROM processed_messages
-     WHERE processed_at > now() - interval '7 days' AND account_id = ANY($1)
-     GROUP BY label`,
-    [allAccountIds]
-  );
-  const categoryCountByLabel = Object.fromEntries(categoryCounts.map((r) => [r.label, r.count]));
-  const maxCategoryCount = Math.max(1, ...CATEGORY_ORDER.map((c) => categoryCountByLabel[c.label] || 0));
-
-  const { rows: pollHealthAccounts } = await pool.query(
-    `SELECT id, email, last_poll_success_at, last_poll_error FROM accounts WHERE active = true ORDER BY created_at`
-  );
-  function timeAgo(date) {
-    const ms = Date.now() - new Date(date).getTime();
-    const mins = Math.round(ms / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins} min ago`;
-    const hours = Math.round(mins / 60);
-    if (hours < 24) return `${hours} hr ago`;
-    return `${Math.round(hours / 24)}d ago`;
-  }
-
-  const topPrioritiesPreview = priorities.slice(0, 4);
-
-  const dashboardWidgets = `
-    <div class="bento">
-      <section class="tile tile-priorities">
-        <div class="tile-head">
-          <h2>Top priorities</h2>
-          ${totalCount ? `<a href="#priority-list-anchor">View all ${totalCount} →</a>` : ""}
-        </div>
-        <div class="pq-list">
-          ${
-            topPrioritiesPreview.length
-              ? topPrioritiesPreview
-                  .map(
-                    (p) => `
-              <div class="pq-row">
-                <div class="pq-dot"></div>
-                <div class="pq-body">
-                  <div class="pq-subject">${escapeHtml(p.subject) || "(no subject)"}${p.pinned ? `<span class="pq-pin">Pinned</span>` : ""}</div>
-                  <div class="pq-meta">${escapeHtml(p.from_address)} · ${escapeHtml(p.account_email)}</div>
-                  ${p.snippet ? `<div class="pq-snippet">${escapeHtml(p.snippet)}</div>` : ""}
-                </div>
-              </div>`
-                  )
-                  .join("")
-              : `<div class="empty-state" style="padding:12px 0;">Nothing urgent waiting on you right now.</div>`
-          }
-        </div>
-      </section>
-
-      <a class="tile tile-stat" href="/invoices">
-        <div class="tile-eyebrow">Invoices</div>
-        <div class="stat-row">
-          <div>
-            <span class="stat-value">${invoiceSummary.count}</span><span class="stat-unit">unpaid</span>
-            <div class="stat-sub">${invoiceSummary.count ? `${fmtUsd(invoiceSummary.total)} due` : "all caught up"}</div>
-          </div>
-          <div class="stat-icon invoice">$</div>
-        </div>
-      </a>
-
-      <a class="tile tile-stat" href="/meetings">
-        <div class="tile-eyebrow">Meetings</div>
-        <div class="stat-row">
-          <div>
-            <span class="stat-value">${meetingSummary.in_progress || "—"}</span>
-            <div class="stat-sub">${
-              meetingSummary.in_progress
-                ? `${meetingSummary.in_progress} recording now`
-                : meetingSummary.latest_title
-                ? `Last: ${escapeHtml(meetingSummary.latest_title)}`
-                : "None yet"
-            }</div>
-          </div>
-          <div class="stat-icon meeting">◐</div>
-        </div>
-      </a>
-
-      <a class="tile tile-chat" href="/chat">
-        <div>
-          <h2>Chat</h2>
-          <p>Ask a question across your inboxes, check your calendar, or draft something new.</p>
-        </div>
-        <div class="chat-cta">Ask Sift →</div>
-      </a>
-
-      <section class="tile tile-categories">
-        <div class="tile-eyebrow">Last 7 days, by category</div>
-        ${CATEGORY_ORDER.map((c) => {
-          const count = categoryCountByLabel[c.label] || 0;
-          const pct = Math.round((count / maxCategoryCount) * 100);
-          return `
-        <div class="cat-row">
-          <div class="cat-label">${c.name}</div>
-          <div class="cat-track"><div class="cat-fill" style="width:${pct}%; background:var(${c.varName});"></div></div>
-          <div class="cat-count">${count}</div>
-        </div>`;
-        }).join("")}
-      </section>
-
-      <section class="tile tile-accounts">
-        <div class="tile-eyebrow">Connected accounts</div>
-        ${pollHealthAccounts
-          .map(
-            (a) => `
-        <div class="acct-row">
-          <div class="acct-dot ${a.last_poll_error ? "warn" : "ok"}"></div>
-          <div class="acct-email">${escapeHtml(a.email)}</div>
-          <div class="acct-status">${a.last_poll_error ? "Poll failing" : a.last_poll_success_at ? timeAgo(a.last_poll_success_at) : "Not yet polled"}</div>
-        </div>`
-          )
-          .join("")}
-      </section>
-    </div>`;
 
   const priorityRows = priorities.length
     ? priorities
@@ -1023,14 +1026,12 @@ app.get("/", async (req, res) => {
     <h1>${showDone ? "Completed" : "Top priorities"}</h1>
     <p class="subtitle">
       ${showDone ? "Urgent items you've marked done." : "Every urgent email across your connected inboxes, in one list."}
-      ${showDone ? `<a href="/" style="margin-left:8px;">← Back to active</a>` : `<a href="/?view=done" style="margin-left:8px;">View completed →</a>`}
+      ${showDone ? `<a href="/priorities" style="margin-left:8px;">← Back to active</a>` : `<a href="/priorities?view=done" style="margin-left:8px;">View completed →</a>`}
     </p>
-
-    ${showDone ? "" : dashboardWidgets}
 
     <p class="keyboard-hint"><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>d</kbd> ${showDone ? "undo" : "done"} · ${showDone ? "" : "<kbd>p</kbd> pin · "}<kbd>x</kbd> delete · <kbd>enter</kbd> open</p>
 
-    <form method="GET" action="/" id="account-filter-form" style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:14px;">
+    <form method="GET" action="/priorities" id="account-filter-form" style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:14px;">
       <input type="hidden" name="filtered" value="1" />
       ${showDone ? `<input type="hidden" name="view" value="done" />` : ""}
       <label style="display:flex; align-items:center; gap:6px; font-size:13.5px;">
@@ -1095,7 +1096,7 @@ app.get("/", async (req, res) => {
       </div>
     </div>
 
-    <div class="priority-list" id="priority-list-anchor">${priorityRows}</div>
+    <div class="priority-list">${priorityRows}</div>
 
     <div class="section" style="margin-top:12px;">
       <h2>Connected accounts</h2>
@@ -1460,7 +1461,7 @@ app.get("/", async (req, res) => {
     </script>
   `;
 
-  res.send(await renderLayout({ title: "Home", activeAccountId: null, accounts, body, activePage: "priorities" }));
+  res.send(await renderLayout({ title: "Top priorities", activeAccountId: null, accounts, body, activePage: "priorities" }));
 });
 
 // ---------- Top priorities actions ----------
@@ -1529,7 +1530,7 @@ app.get("/priorities/:id/view", async (req, res) => {
   if (sort !== defaultSort) contextParams.set("sort", sort);
   if (Number(req.query.page) > 1) contextParams.set("page", String(Number(req.query.page)));
   const contextQS = contextParams.toString();
-  const backUrl = contextQS ? `/?${contextQS}` : "/";
+  const backUrl = contextQS ? `/priorities?${contextQS}` : "/priorities";
   const viewQS = contextQS ? `?${contextQS}` : "";
 
   const { rows } = await pool.query(
@@ -1680,13 +1681,13 @@ app.get("/priorities/:id/preview", async (req, res) => {
 app.post("/priorities/:id/done", async (req, res) => {
   await pool.query(`UPDATE processed_messages SET done = true WHERE id = $1`, [req.params.id]);
   if (isAjax(req)) return res.sendStatus(200);
-  res.redirect("/");
+  res.redirect("/priorities");
 });
 
 app.post("/priorities/:id/undone", async (req, res) => {
   await pool.query(`UPDATE processed_messages SET done = false WHERE id = $1`, [req.params.id]);
   if (isAjax(req)) return res.sendStatus(200);
-  res.redirect("/");
+  res.redirect("/priorities");
 });
 
 app.post("/priorities/:id/pin", async (req, res) => {
@@ -1695,13 +1696,13 @@ app.post("/priorities/:id/pin", async (req, res) => {
     [req.params.id]
   );
   if (isAjax(req)) return res.sendStatus(200);
-  res.redirect("/");
+  res.redirect("/priorities");
 });
 
 app.post("/priorities/:id/delete", async (req, res) => {
   await pool.query(`DELETE FROM processed_messages WHERE id = $1`, [req.params.id]);
   if (isAjax(req)) return res.sendStatus(200);
-  res.redirect("/");
+  res.redirect("/priorities");
 });
 
 const BULK_ACTIONS = {
@@ -1742,11 +1743,11 @@ app.post("/priorities/:id/draft", async (req, res) => {
     ]);
 
     if (isAjax(req)) return res.sendStatus(200);
-    res.redirect("/");
+    res.redirect("/priorities");
   } catch (err) {
     console.error("Manual draft creation failed:", err.message);
     if (isAjax(req)) return res.status(500).json({ ok: false, error: err.message });
-    res.redirect("/");
+    res.redirect("/priorities");
   }
 });
 
@@ -4011,7 +4012,7 @@ app.get("/settings/:id", async (req, res) => {
     : `<p class="section-help" style="margin:0;">No files uploaded yet.</p>`;
 
   const body = `
-    <a href="/" class="eyebrow-link">← All accounts</a>
+    <a href="/priorities" class="eyebrow-link">← All accounts</a>
     <h1>${account.email}</h1>
     <p class="subtitle">${account.provider === "google" ? "Gmail" : "Outlook"} · triage and drafting rules for this inbox</p>
 
@@ -4491,7 +4492,7 @@ app.use(async (req, res) => {
     const body = `
       <h1>Page not found</h1>
       <p class="subtitle">There's nothing at ${escapeHtml(req.path)}.</p>
-      <p><a href="/">Back to Top priorities →</a></p>
+      <p><a href="/">Back home →</a></p>
     `;
     res.status(404).send(await renderLayout({ title: "Not found", activeAccountId: null, accounts, body, activePage: null }));
   } catch (err) {

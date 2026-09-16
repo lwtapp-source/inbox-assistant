@@ -617,10 +617,9 @@ code {
 }
 
 /* ---------- Dashboard bento ---------- */
-/* Home page summary: Top Priorities is the anchor tile (largest, since it's what's
-   actually opened and acted on daily) with the other sections as smaller glanceable
-   tiles around it. The full sortable/filterable priority list still renders below,
-   unchanged -- this replaces the old flat 3-card .dashboard-widgets row, not the list. */
+/* Home page overview: six equal-weight tiles, three per row. Top Priorities is a stat
+   tile like Invoices/Meetings (a count + link), not a preview list -- the actual list
+   lives on its own page (/priorities), so nothing here duplicates content shown there. */
 
 .bento {
   display: grid;
@@ -655,94 +654,8 @@ a.tile:hover {
   margin: 0 0 10px;
 }
 
-.tile-priorities {
-  grid-column: span 7;
-  grid-row: span 2;
-}
-
-.tile-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 4px;
-}
-
-.tile-head h2 {
-  font-family: "Fraunces", Georgia, serif;
-  font-weight: 600;
-  font-size: 17px;
-  margin: 0;
-}
-
-.pq-list {
-  margin-top: 8px;
-  display: flex;
-  flex-direction: column;
-}
-
-.pq-row {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 10px 0;
-  border-top: 1px solid var(--border);
-}
-
-.pq-row:first-child {
-  border-top: none;
-  padding-top: 6px;
-}
-
-.pq-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--urgent);
-  margin-top: 7px;
-  flex: 0 0 auto;
-}
-
-.pq-body {
-  min-width: 0;
-  flex: 1;
-}
-
-.pq-subject {
-  font-size: 14px;
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  overflow-wrap: break-word;
-}
-
-.pq-pin {
-  font-size: 10.5px;
-  background: var(--error-bg);
-  color: var(--urgent);
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.pq-meta {
-  font-size: 12.5px;
-  color: var(--ink-soft);
-  margin-top: 2px;
-}
-
-.pq-snippet {
-  font-size: 12.5px;
-  color: var(--ink-faint);
-  margin-top: 3px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .tile-stat {
-  grid-column: span 5;
+  grid-column: span 4;
 }
 
 .stat-row {
@@ -907,16 +820,11 @@ a.tile:hover {
 }
 
 @media (max-width: 980px) {
-  .tile-priorities,
   .tile-stat,
   .tile-categories,
   .tile-chat,
   .tile-accounts {
     grid-column: span 12;
-  }
-
-  .tile-priorities {
-    grid-row: span 1;
   }
 }
 
