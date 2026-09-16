@@ -997,6 +997,25 @@ button[type="submit"].link-button.danger:hover {
   white-space: nowrap;
 }
 
+.invoice-edit {
+  margin-top: 8px;
+}
+
+.invoice-edit summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--accent-dark);
+  list-style: none;
+}
+
+.invoice-edit summary::-webkit-details-marker {
+  display: none;
+}
+
+.invoice-edit summary:hover {
+  text-decoration: underline;
+}
+
 .priority-actions {
   display: flex;
   align-items: center;

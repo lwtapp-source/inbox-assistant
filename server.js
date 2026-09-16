@@ -2555,6 +2555,22 @@ app.get("/invoices", async (req, res) => {
               ${escapeHtml(inv.account_email)}${inv.due_date ? ` · Due ${new Date(inv.due_date).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" })}` : " · No due date found"}${inv.invoice_number ? ` · #${escapeHtml(inv.invoice_number)}` : ""}
             </div>
             ${inv.subject && inv.subject !== inv.vendor ? `<div class="priority-snippet">${escapeHtml(inv.subject)}</div>` : ""}
+            <details class="invoice-edit">
+              <summary>Edit details</summary>
+              <form method="POST" action="/invoices/${inv.id}/edit" style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px;">
+                <input type="text" name="vendor" placeholder="Vendor" value="${escapeHtml(inv.vendor || "")}"
+                  style="padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:13px; min-width:140px;" />
+                <input type="number" step="0.01" name="amount" placeholder="Amount" value="${inv.amount ?? ""}"
+                  style="padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:13px; width:100px;" />
+                <input type="text" name="currency" placeholder="USD" value="${escapeHtml(inv.currency || "USD")}"
+                  style="padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:13px; width:64px;" />
+                <input type="date" name="due_date" value="${inv.due_date ? new Date(inv.due_date).toISOString().slice(0, 10) : ""}"
+                  style="padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:13px;" />
+                <input type="text" name="invoice_number" placeholder="Invoice #" value="${escapeHtml(inv.invoice_number || "")}"
+                  style="padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:13px; min-width:100px;" />
+                <button type="submit" style="padding:6px 12px; font-size:13px;">Save</button>
+              </form>
+            </details>
           </div>
           <div class="priority-actions">
             ${inv.web_link ? `<a href="${inv.web_link}">Open</a>` : ""}
@@ -2810,6 +2826,26 @@ app.post("/invoices/:id/unpaid", async (req, res) => {
 app.post("/invoices/:id/delete", async (req, res) => {
   await pool.query(`DELETE FROM invoices WHERE id = $1`, [req.params.id]);
   res.redirect(withToast("/invoices", "Invoice deleted"));
+});
+
+// Manual correction for whatever the AI extraction (src/invoiceScan.js) got wrong or
+// couldn't find — vendor/amount/due date/invoice number are all best-effort reads of the
+// email/attachment, with no guarantee they're right.
+app.post("/invoices/:id/edit", async (req, res) => {
+  const amountRaw = req.body.amount?.trim();
+  const amount = amountRaw ? Number(amountRaw) : null;
+  await pool.query(
+    `UPDATE invoices SET vendor = $1, amount = $2, currency = $3, due_date = $4, invoice_number = $5 WHERE id = $6`,
+    [
+      req.body.vendor?.trim() || null,
+      Number.isFinite(amount) ? amount : null,
+      req.body.currency?.trim() || "USD",
+      req.body.due_date?.trim() || null,
+      req.body.invoice_number?.trim() || null,
+      req.params.id,
+    ]
+  );
+  res.redirect(withToast("/invoices", "Invoice updated"));
 });
 
 // ---------- Chat (inbox search + draft-from-scratch) ----------
