@@ -2292,16 +2292,57 @@ app.get("/invoices", async (req, res) => {
   const accounts = await getAccounts();
   const showPaid = req.query.view === "paid";
 
-  const { rows: invoiceRows } = await pool.query(
-    `SELECT inv.id, inv.vendor, inv.amount, inv.currency, inv.due_date, inv.invoice_number,
-            inv.subject, inv.web_link, a.email AS account_email
-     FROM invoices inv
-     JOIN accounts a ON a.id = inv.account_id
-     WHERE inv.paid = $1
-     ORDER BY ${showPaid ? "inv.created_at DESC" : "inv.due_date ASC NULLS LAST, inv.created_at DESC"}
-     LIMIT 100`,
-    [showPaid]
-  );
+  const allAccountIds = accounts.map((a) => a.id);
+  let selectedAccountIds;
+  if (req.query.filtered) {
+    const raw = req.query.accounts;
+    const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    selectedAccountIds = list.map((s) => Number(s)).filter((n) => allAccountIds.includes(n));
+  } else {
+    selectedAccountIds = allAccountIds;
+  }
+
+  const PAGE_SIZE = 50;
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const offset = (page - 1) * PAGE_SIZE;
+
+  const { rows: invoiceRows } = selectedAccountIds.length
+    ? await pool.query(
+        `SELECT inv.id, inv.vendor, inv.amount, inv.currency, inv.due_date, inv.invoice_number,
+                inv.subject, inv.web_link, a.email AS account_email
+         FROM invoices inv
+         JOIN accounts a ON a.id = inv.account_id
+         WHERE inv.paid = $1 AND inv.account_id = ANY($2)
+         ORDER BY ${showPaid ? "inv.created_at DESC" : "inv.due_date ASC NULLS LAST, inv.created_at DESC"}
+         LIMIT $3 OFFSET $4`,
+        [showPaid, selectedAccountIds, PAGE_SIZE, offset]
+      )
+    : { rows: [] };
+
+  const {
+    rows: [{ count: totalCount }],
+  } = selectedAccountIds.length
+    ? await pool.query(
+        `SELECT COUNT(*)::int AS count FROM invoices inv WHERE inv.paid = $1 AND inv.account_id = ANY($2)`,
+        [showPaid, selectedAccountIds]
+      )
+    : { rows: [{ count: 0 }] };
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const rangeStart = totalCount === 0 ? 0 : offset + 1;
+  const rangeEnd = Math.min(offset + PAGE_SIZE, totalCount);
+
+  function buildInvoiceListUrl(targetPage) {
+    const params = new URLSearchParams();
+    if (showPaid) params.set("view", "paid");
+    if (req.query.filtered) {
+      params.set("filtered", "1");
+      for (const id of selectedAccountIds) params.append("accounts", String(id));
+    }
+    if (targetPage > 1) params.set("page", String(targetPage));
+    const qs = params.toString();
+    return qs ? `/invoices?${qs}` : "/invoices";
+  }
 
   const fmtAmount = (amount, currency) => {
     if (amount === null || amount === undefined) return "";
@@ -2318,7 +2359,8 @@ app.get("/invoices", async (req, res) => {
     ? invoiceRows
         .map(
           (inv) => `
-        <div class="priority-row">
+        <div class="priority-row" data-id="${inv.id}">
+          <input type="checkbox" class="bulk-select" aria-label="Select this invoice" style="margin-top:3px;" />
           <div class="priority-main">
             <div class="priority-top">
               <span class="priority-subject">${escapeHtml(inv.vendor) || escapeHtml(inv.subject) || "(unknown vendor)"}</span>
@@ -2379,10 +2421,178 @@ app.get("/invoices", async (req, res) => {
         : ""
     }
 
+    <form method="GET" action="/invoices" id="invoice-filter-form" style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:14px;">
+      <input type="hidden" name="filtered" value="1" />
+      ${showPaid ? `<input type="hidden" name="view" value="paid" />` : ""}
+      ${
+        accounts.length > 1
+          ? accounts
+              .map(
+                (a) => `
+             <label style="display:flex; align-items:center; gap:6px; font-size:13.5px; cursor:pointer;">
+               <input type="checkbox" name="accounts" value="${a.id}" ${
+                 selectedAccountIds.includes(a.id) ? "checked" : ""
+               } onchange="document.getElementById('invoice-filter-form').submit()" />
+               <span class="account-dot ${a.provider}"></span>${escapeHtml(a.email)}
+             </label>`
+              )
+              .join("")
+          : accounts.map((a) => `<input type="hidden" name="accounts" value="${a.id}" />`).join("")
+      }
+    </form>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        ${
+          invoiceRows.length
+            ? `<label style="display:flex; align-items:center; gap:6px; font-size:13.5px; cursor:pointer;">
+                 <input type="checkbox" id="invoice-select-all" /> Select all
+               </label>`
+            : ""
+        }
+        <span class="section-help" style="margin:0;">
+          ${totalCount === 0 ? "" : `Showing ${rangeStart}-${rangeEnd} of ${totalCount}`}
+        </span>
+        <span id="invoice-bulk-toolbar" class="bulk-toolbar" hidden>
+          <span id="invoice-bulk-count" class="section-help" style="margin:0;"></span>
+          ${
+            showPaid
+              ? `<button type="button" id="invoice-bulk-unpaid" class="link-button">Mark unpaid</button>`
+              : `<button type="button" id="invoice-bulk-paid" class="link-button">Mark paid</button>`
+          }
+          <button type="button" id="invoice-bulk-delete" class="link-button danger">Delete</button>
+        </span>
+      </div>
+      <div style="display:flex; gap:16px; align-items:center;">
+        ${
+          page > 1
+            ? `<a href="${buildInvoiceListUrl(page - 1)}">← Previous 50</a>`
+            : `<span class="section-help" style="margin:0; opacity:0.4;">← Previous 50</span>`
+        }
+        ${
+          page < totalPages
+            ? `<a href="${buildInvoiceListUrl(page + 1)}">Next 50 →</a>`
+            : `<span class="section-help" style="margin:0; opacity:0.4;">Next 50 →</span>`
+        }
+      </div>
+    </div>
+
     <div class="priority-list">${invoiceListHtml}</div>
+
+    <script>
+      (function () {
+        var list = document.querySelector(".priority-list");
+        if (!list) return;
+
+        var selectAllCheckbox = document.getElementById("invoice-select-all");
+        var bulkToolbar = document.getElementById("invoice-bulk-toolbar");
+        var bulkCount = document.getElementById("invoice-bulk-count");
+        var bulkPaidBtn = document.getElementById("invoice-bulk-paid");
+        var bulkUnpaidBtn = document.getElementById("invoice-bulk-unpaid");
+        var bulkDeleteBtn = document.getElementById("invoice-bulk-delete");
+
+        function getRows() {
+          return Array.from(list.querySelectorAll(".priority-row"));
+        }
+
+        function getSelectedIds() {
+          return getRows()
+            .filter(function (row) {
+              var cb = row.querySelector(".bulk-select");
+              return cb && cb.checked;
+            })
+            .map(function (row) {
+              return row.getAttribute("data-id");
+            });
+        }
+
+        function updateBulkToolbar() {
+          var ids = getSelectedIds();
+          var allCheckboxes = getRows().map(function (row) { return row.querySelector(".bulk-select"); }).filter(Boolean);
+          if (bulkToolbar) bulkToolbar.hidden = ids.length === 0;
+          if (bulkCount) bulkCount.textContent = ids.length + " selected";
+          if (selectAllCheckbox) {
+            selectAllCheckbox.checked = allCheckboxes.length > 0 && ids.length === allCheckboxes.length;
+            selectAllCheckbox.indeterminate = ids.length > 0 && ids.length < allCheckboxes.length;
+          }
+        }
+
+        list.addEventListener("change", function (e) {
+          if (e.target.classList.contains("bulk-select")) updateBulkToolbar();
+        });
+
+        if (selectAllCheckbox) {
+          selectAllCheckbox.addEventListener("change", function () {
+            getRows().forEach(function (row) {
+              var cb = row.querySelector(".bulk-select");
+              if (cb) cb.checked = selectAllCheckbox.checked;
+            });
+            updateBulkToolbar();
+          });
+        }
+
+        function showEmptyStateIfNeeded() {
+          if (!list.querySelector(".priority-row")) {
+            list.innerHTML = '<div class="empty-state" style="padding:20px 0;">' + ${JSON.stringify(showPaid ? "No paid invoices yet." : "No unpaid invoices right now.")} + "</div>";
+          }
+        }
+
+        async function runBulkAction(action) {
+          var ids = getSelectedIds();
+          if (!ids.length) return;
+          try {
+            var res = await fetch("/invoices/bulk", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ids: ids, action: action }),
+            });
+            if (!res.ok) throw new Error("Request failed: " + res.status);
+            ids.forEach(function (id) {
+              var row = list.querySelector('.priority-row[data-id="' + id + '"]');
+              if (row) row.remove();
+            });
+            showEmptyStateIfNeeded();
+            updateBulkToolbar();
+          } catch (err) {
+            console.error(err);
+            alert("Something went wrong — please try again.");
+          }
+        }
+
+        if (bulkPaidBtn) bulkPaidBtn.addEventListener("click", function () { runBulkAction("paid"); });
+        if (bulkUnpaidBtn) bulkUnpaidBtn.addEventListener("click", function () { runBulkAction("unpaid"); });
+        if (bulkDeleteBtn) {
+          bulkDeleteBtn.addEventListener("click", function () {
+            var ids = getSelectedIds();
+            if (!ids.length) return;
+            var confirmed = confirm(
+              "Delete " + ids.length + " selected invoice" + (ids.length === 1 ? "" : "s") +
+              "? This only removes them from tracking here — the original emails stay in your inbox."
+            );
+            if (confirmed) runBulkAction("delete");
+          });
+        }
+      })();
+    </script>
   `;
 
   res.send(await renderLayout({ title: "Invoices", activeAccountId: null, accounts, body, activePage: "invoices" }));
+});
+
+app.post("/invoices/bulk", express.json(), async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
+  const action = req.body?.action;
+  const queries = {
+    paid: `UPDATE invoices SET paid = true WHERE id = ANY($1)`,
+    unpaid: `UPDATE invoices SET paid = false WHERE id = ANY($1)`,
+    delete: `DELETE FROM invoices WHERE id = ANY($1)`,
+  };
+  const query = queries[action];
+  if (!ids.length || !query) {
+    return res.status(400).json({ ok: false, error: "Invalid request" });
+  }
+  await pool.query(query, [ids]);
+  res.sendStatus(200);
 });
 
 app.post("/invoices/scan", async (req, res) => {
