@@ -159,6 +159,11 @@ body {
   font-size: 15px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  /* A long unbroken string (an email address, mostly) has no natural break point, so
+     normal wrapping leaves it to force its container — and the whole page — wider,
+     causing a horizontal scrollbar. This doesn't affect code/pre blocks, which set their
+     own white-space and manage overflow-x separately. */
+  overflow-wrap: break-word;
 }
 
 .settings-jump-nav {
