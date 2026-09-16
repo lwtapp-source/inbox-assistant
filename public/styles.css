@@ -616,50 +616,308 @@ code {
   font-size: 13px;
 }
 
-/* ---------- Dashboard widgets ---------- */
+/* ---------- Dashboard bento ---------- */
+/* Home page summary: Top Priorities is the anchor tile (largest, since it's what's
+   actually opened and acted on daily) with the other sections as smaller glanceable
+   tiles around it. The full sortable/filterable priority list still renders below,
+   unchanged -- this replaces the old flat 3-card .dashboard-widgets row, not the list. */
 
-.dashboard-widgets {
-  display: flex;
+.bento {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  grid-auto-rows: minmax(72px, auto);
   gap: 12px;
   margin-bottom: 28px;
-  flex-wrap: wrap;
 }
 
-.widget-card {
-  flex: 1;
-  min-width: 160px;
+.tile {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px 18px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   text-decoration: none;
   color: var(--ink);
   transition: border-color 0.15s ease;
 }
 
-.widget-card:hover {
+a.tile:hover {
   border-color: var(--accent);
 }
 
-.widget-label {
+.tile-eyebrow {
   font-size: 12.5px;
-  color: var(--ink-soft);
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  margin-bottom: 6px;
+  color: var(--ink-soft);
+  margin: 0 0 10px;
 }
 
-.widget-value {
-  font-family: "Fraunces", Georgia, serif;
-  font-size: 26px;
-  font-weight: 600;
-  color: var(--ink);
+.tile-priorities {
+  grid-column: span 7;
+  grid-row: span 2;
+}
+
+.tile-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
   margin-bottom: 4px;
 }
 
-.widget-sub {
+.tile-head h2 {
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 600;
+  font-size: 17px;
+  margin: 0;
+}
+
+.pq-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.pq-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.pq-row:first-child {
+  border-top: none;
+  padding-top: 6px;
+}
+
+.pq-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--urgent);
+  margin-top: 7px;
+  flex: 0 0 auto;
+}
+
+.pq-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.pq-subject {
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-wrap: break-word;
+}
+
+.pq-pin {
+  font-size: 10.5px;
+  background: var(--error-bg);
+  color: var(--urgent);
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.pq-meta {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
+
+.pq-snippet {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile-stat {
+  grid-column: span 5;
+}
+
+.stat-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stat-value {
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 600;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.stat-unit {
   font-size: 13px;
   color: var(--ink-soft);
+  margin-left: 4px;
+  font-family: "Inter", sans-serif;
+}
+
+.stat-sub {
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin-top: 8px;
+}
+
+.stat-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex: 0 0 auto;
+  background: var(--accent-wash);
+  color: var(--accent-dark);
+}
+
+.tile-categories {
+  grid-column: span 4;
+}
+
+.cat-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.cat-label {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  width: 84px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cat-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.cat-fill {
+  height: 100%;
+  border-radius: 999px;
+}
+
+.cat-count {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  width: 20px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile-chat {
+  grid-column: span 4;
+  background: var(--accent-wash);
+  border-color: var(--accent-wash);
+  justify-content: space-between;
+}
+
+.tile-chat h2 {
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 600;
+  font-size: 17px;
+  margin: 0 0 6px;
+}
+
+.tile-chat p {
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.chat-cta {
+  margin-top: 14px;
+  align-self: flex-start;
+  background: var(--accent-dark);
+  color: #ffffff;
+  font-family: "Inter", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 999px;
+}
+
+.tile-accounts {
+  grid-column: span 4;
+}
+
+.acct-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.acct-row:first-of-type {
+  border-top: none;
+  padding-top: 10px;
+}
+
+.acct-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.acct-dot.ok {
+  background: var(--invoice);
+}
+
+.acct-dot.warn {
+  background: var(--urgent);
+}
+
+.acct-email {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acct-status {
+  font-size: 12px;
+  color: var(--ink-faint);
+  flex: 0 0 auto;
+}
+
+@media (max-width: 980px) {
+  .tile-priorities,
+  .tile-stat,
+  .tile-categories,
+  .tile-chat,
+  .tile-accounts {
+    grid-column: span 12;
+  }
+
+  .tile-priorities {
+    grid-row: span 1;
+  }
 }
 
 /* ---------- Category rows ---------- */
