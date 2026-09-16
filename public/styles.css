@@ -148,12 +148,20 @@ body {
   top: 0;
   z-index: 10;
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  align-items: center;
+  gap: 10px;
   background: var(--bg);
   padding: 10px 0 14px;
   margin-bottom: 18px;
   border-bottom: 1px solid var(--border);
+}
+
+.settings-jump-nav-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
 }
 
 .settings-jump-nav a {
@@ -170,6 +178,16 @@ body {
 .settings-jump-nav a:hover {
   border-color: var(--accent);
   color: var(--accent-dark);
+}
+
+/* Lets you save from wherever you are on the page instead of scrolling all the way past
+   every section back down to the form's own submit button — this sits in the jump-nav
+   (already sticky) and submits the same form via the form="" attribute despite not being
+   a descendant of it. */
+.settings-jump-nav-save {
+  flex-shrink: 0;
+  padding: 7px 14px;
+  font-size: 13px;
 }
 
 .section h2 {

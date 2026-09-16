@@ -3061,23 +3061,26 @@ app.get("/settings/:id", async (req, res) => {
     }
 
     <nav class="settings-jump-nav">
-      <a href="#triage-rules">Triage</a>
-      <a href="#sender-rules">Sender rules</a>
-      <a href="#category-routing">Routing</a>
-      <a href="#writing-tone">Tone</a>
-      <a href="#auto-draft">Auto-draft</a>
-      <a href="#follow-ups">Follow-ups</a>
-      <a href="#always-draft">Always draft</a>
-      <a href="#signature">Signature</a>
-      <a href="#custom-words">Custom words</a>
-      <a href="#scheduling">Scheduling</a>
-      <a href="#custom-files">Files</a>
-      <a href="#learned-notes">Learned</a>
-      <a href="#detected-appointments">Appointments</a>
-      <a href="#disconnect" style="color:var(--urgent);">Disconnect</a>
+      <div class="settings-jump-nav-links">
+        <a href="#triage-rules">Triage</a>
+        <a href="#sender-rules">Sender rules</a>
+        <a href="#category-routing">Routing</a>
+        <a href="#writing-tone">Tone</a>
+        <a href="#auto-draft">Auto-draft</a>
+        <a href="#follow-ups">Follow-ups</a>
+        <a href="#always-draft">Always draft</a>
+        <a href="#signature">Signature</a>
+        <a href="#custom-words">Custom words</a>
+        <a href="#scheduling">Scheduling</a>
+        <a href="#custom-files">Files</a>
+        <a href="#learned-notes">Learned</a>
+        <a href="#detected-appointments">Appointments</a>
+        <a href="#disconnect" style="color:var(--urgent);">Disconnect</a>
+      </div>
+      <button type="submit" form="settings-main-form" class="settings-jump-nav-save">Save changes</button>
     </nav>
 
-    <form method="POST" action="/settings/${account.id}">
+    <form method="POST" action="/settings/${account.id}" id="settings-main-form">
       <div class="section">
         <h2 id="triage-rules">Triage rules</h2>
         <p class="section-help">
