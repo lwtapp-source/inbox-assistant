@@ -3318,6 +3318,16 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
       <button type="submit" id="chat-submit">Ask</button>
     </form>
 
+    <div class="section" style="display:flex; justify-content:space-between; align-items:center;">
+      <h2 style="margin:0;">Conversation</h2>
+      <form method="POST" action="/chat/clear" onsubmit="return confirm('Clear the whole conversation history?');">
+        <button type="submit" class="link-button danger">Clear conversation</button>
+      </form>
+    </div>
+
+    <div id="chat-thread">${historyHtml}</div>
+    <div id="chat-result">${resultHtml}</div>
+
     <div class="section">
       <h2>Search index</h2>
       <p class="section-help">
@@ -3365,18 +3375,17 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
       }
     </div>
 
-    <div class="section" style="display:flex; justify-content:space-between; align-items:center;">
-      <h2 style="margin:0;">Conversation</h2>
-      <form method="POST" action="/chat/clear" onsubmit="return confirm('Clear the whole conversation history?');">
-        <button type="submit" class="link-button danger">Clear conversation</button>
-      </form>
-    </div>
-
-    <div id="chat-thread">${historyHtml}</div>
-    <div id="chat-result">${resultHtml}</div>
-
     <script>
       (function () {
+        // Full-page POST fallback (JS present but no fetch/ReadableStream, or a form
+        // submit that reloaded before the AJAX handler below attached): the server
+        // already rendered a fresh answer into #chat-result, so jump to it rather than
+        // leaving the user scrolled wherever the page happened to load.
+        var initialResultEl = document.getElementById("chat-result");
+        if (initialResultEl && initialResultEl.children.length) {
+          initialResultEl.scrollIntoView({ block: "start" });
+        }
+
         var form = document.getElementById("chat-form");
         if (!form || !window.fetch || !window.ReadableStream) return; // no-JS/old-browser fallback: plain form POST to /chat
 
@@ -3511,7 +3520,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
         // Mirrors the server's linkifyHtml(): only ever wraps already-escaped text in an
         // anchor tag, so it can't introduce unescaped HTML from a web-search answer.
         function linkify(escapedText) {
-          return escapedText.replace(/(https?:\/\/[^\s<]+)/g, function (url) {
+          return escapedText.replace(/(https?:\\/\\/[^\\s<]+)/g, function (url) {
             var trailingMatch = url.match(/[).,;:!?]+$/);
             var clean = trailingMatch ? url.slice(0, url.length - trailingMatch[0].length) : url;
             var trailing = trailingMatch ? trailingMatch[0] : "";
@@ -3554,13 +3563,13 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
           } else if (data.type === "remembered") {
             resultEl.innerHTML =
               userTurn(message) +
-              '<div class="chat-turn chat-turn-assistant"><h2>Got it</h2><p class="section-help">I\'ll remember: ' +
+              '<div class="chat-turn chat-turn-assistant"><h2>Got it</h2><p class="section-help">I\\'ll remember: ' +
               escapeForHtml(data.content) +
               (data.scopeEmail ? " (for " + escapeForHtml(data.scopeEmail) + ")" : " (for every inbox)") +
               "</p></div>";
           } else if (data.type === "remember_unavailable") {
             resultEl.innerHTML =
-              '<div class="chat-turn chat-turn-assistant"><h2>Long-term memory isn\'t set up</h2><p class="section-help">' +
+              '<div class="chat-turn chat-turn-assistant"><h2>Long-term memory isn\\'t set up</h2><p class="section-help">' +
               "This needs the same embedding API key semantic search uses — that preference wasn't saved.</p></div>";
           }
         }
@@ -3609,6 +3618,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
           submitBtn.disabled = true;
           submitBtn.textContent = "Asking…";
           resultEl.innerHTML = '<div class="section"><p class="section-help">Thinking…</p></div>';
+          resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
 
           fetch("/chat/ask", {
             method: "POST",
@@ -3637,6 +3647,11 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
                 thread.innerHTML += resultEl.innerHTML;
                 resultEl.innerHTML = "";
                 document.getElementById("chat-message").value = "";
+                if (thread.lastElementChild) {
+                  thread.lastElementChild.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
+              } else {
+                resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
               }
             })
             .catch(function (err) {
@@ -3644,6 +3659,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
                 '<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">Something went wrong: ' +
                 escapeForHtml(err.message) +
                 "</div>";
+              resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
             })
             .then(function () {
               submitBtn.disabled = false;
