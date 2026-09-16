@@ -216,10 +216,33 @@ Request: ${message}`,
   }
 }
 
+// Anthropic's server-executed web search tool: Claude decides if/when to search and the
+// results come back inline in the same response — no separate round-trip or client-side
+// tool loop needed. `max_uses` caps how many searches one question can trigger (cost/
+// latency guardrail). Only attached when the user opts in via the Chat page's "Also
+// search the web" checkbox — inbox questions don't need it, and each search has a cost.
+// The installed @anthropic-ai/sdk (0.32.x) predates this tool's TypeScript types, but the
+// SDK passes `tools`/response content straight through as JSON with no client-side
+// validation (confirmed by reading its request/stream source), so the older SDK version
+// doesn't need bumping just for this.
+const WEB_SEARCH_TOOL = { type: "web_search_20260318", name: "web_search", max_uses: 3 };
+
+// A web-search response's content is a mix of text/server_tool_use/web_search_tool_result
+// blocks (Claude may search, read results, then keep writing) — the visible answer is
+// every text block concatenated in order.
+function extractAnswerText(content) {
+  return content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("");
+}
+
 // Answers a Chat search question using retrieved email results. `history` (recent
 // {role, content} turns) is passed as real prior turns so follow-ups ("what did she say
-// back?") can resolve pronouns/references against the actual conversation.
-export async function answerFromSearch({ question, results, history = [] }) {
+// back?") can resolve pronouns/references against the actual conversation. `useWebSearch`
+// lets Claude supplement the inbox results with a live web search when the question needs
+// outside context (e.g. "what's the return policy" from a vendor's site, not just the email).
+export async function answerFromSearch({ question, results, history = [], useWebSearch = false }) {
   const context = results.length
     ? results
         .map(
@@ -229,16 +252,21 @@ export async function answerFromSearch({ question, results, history = [] }) {
         .join("\n\n")
     : "No matching emails were found.";
 
+  const webNote = useWebSearch
+    ? " You also have a web search tool — use it if the inbox results alone don't fully answer the question, and mention the source when you do."
+    : "";
+
   const msg = await anthropic.messages.create({
     model: MODEL,
     max_tokens: 500,
+    ...(useWebSearch ? { tools: [WEB_SEARCH_TOOL] } : {}),
     messages: [
       ...history.map((h) => ({ role: h.role === "assistant" ? "assistant" : "user", content: h.content })),
       {
         role: "user",
         content: `Answer this question using the email search results below. Cite which
 email(s) you're drawing from by their [number]. If the results don't answer the question,
-say so plainly rather than guessing.
+say so plainly rather than guessing.${webNote}
 
 QUESTION: ${question}
 
@@ -247,13 +275,16 @@ ${context}`,
       },
     ],
   });
-  return msg.content[0]?.text ?? "";
+  return extractAnswerText(msg.content);
 }
 
 // Same prompt as answerFromSearch, but yields the answer as it's generated instead of
 // waiting for the full response — used by the Chat page's streaming JS fetch, so the
-// answer appears token-by-token rather than as a single delayed block.
-export async function* answerFromSearchStream({ question, results, history = [] }) {
+// answer appears token-by-token rather than as a single delayed block. When a web search
+// tool call happens mid-stream, only its resulting text blocks emit text_delta events
+// (the search itself doesn't stream tokens), so this naturally still yields just the
+// visible answer text with no extra handling.
+export async function* answerFromSearchStream({ question, results, history = [], useWebSearch = false }) {
   const context = results.length
     ? results
         .map(
@@ -263,16 +294,21 @@ export async function* answerFromSearchStream({ question, results, history = [] 
         .join("\n\n")
     : "No matching emails were found.";
 
+  const webNote = useWebSearch
+    ? " You also have a web search tool — use it if the inbox results alone don't fully answer the question, and mention the source when you do."
+    : "";
+
   const stream = anthropic.messages.stream({
     model: MODEL,
     max_tokens: 500,
+    ...(useWebSearch ? { tools: [WEB_SEARCH_TOOL] } : {}),
     messages: [
       ...history.map((h) => ({ role: h.role === "assistant" ? "assistant" : "user", content: h.content })),
       {
         role: "user",
         content: `Answer this question using the email search results below. Cite which
 email(s) you're drawing from by their [number]. If the results don't answer the question,
-say so plainly rather than guessing.
+say so plainly rather than guessing.${webNote}
 
 QUESTION: ${question}
 

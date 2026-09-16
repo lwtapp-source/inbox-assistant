@@ -213,6 +213,19 @@ function escapeHtml(str) {
     .replace(/'/g, "&#39;");
 }
 
+// Turns bare URLs in already-escaped text into clickable links — web-search-grounded
+// Chat answers often cite sources as plain URLs rather than markdown, and escapeHtml alone
+// would leave them as inert text. Runs strictly after escaping, on the escaped string, so
+// it only ever wraps text in an anchor tag — it can't introduce unescaped HTML.
+function linkifyHtml(escapedText) {
+  return escapedText.replace(/(https?:\/\/[^\s<]+)/g, (url) => {
+    const trailingMatch = url.match(/[).,;:!?]+$/);
+    const clean = trailingMatch ? url.slice(0, -trailingMatch[0].length) : url;
+    const trailing = trailingMatch ? trailingMatch[0] : "";
+    return `<a href="${clean}" target="_blank" rel="noopener">${clean}</a>${trailing}`;
+  });
+}
+
 // Appends a one-shot `toast` query param a redirect target carries into the next full
 // page load; the persistent client-side script in renderLayout reads it on load, shows
 // a transient notification, then strips it from the URL via history.replaceState.
@@ -3006,6 +3019,7 @@ app.post("/chat", async (req, res) => {
   const accountId = req.body.account_id;
   const message = (req.body.message ?? "").trim();
   const override = req.body.intent_override || "auto";
+  const useWebSearch = !!req.body.use_web_search;
 
   let result = null;
 
@@ -3020,7 +3034,7 @@ app.post("/chat", async (req, res) => {
         const history = await getChatHistory(6);
         result = await resolveChatIntent({ ...selection, message, history, override });
         if (result.type === "search") {
-          const answer = await answerFromSearch({ question: message, results: result.sources, history });
+          const answer = await answerFromSearch({ question: message, results: result.sources, history, useWebSearch });
           result = { type: "search", answer, sources: result.sources };
           await saveChatMessage(selection.account?.email, "user", message);
           await saveChatMessage(selection.account?.email, "assistant", answer, result.sources);
@@ -3059,6 +3073,7 @@ app.post("/chat/ask", express.json(), async (req, res) => {
   const accountId = req.body?.account_id;
   const message = (req.body?.message ?? "").trim();
   const override = req.body?.intent_override || "auto";
+  const useWebSearch = !!req.body?.use_web_search;
 
   if (!accountId || !message) {
     return res.status(400).json({ error: "Pick an account and enter a question or request." });
@@ -3088,7 +3103,7 @@ app.post("/chat/ask", express.json(), async (req, res) => {
     res.setHeader("X-Chat-Sources", encodeURIComponent(JSON.stringify(resolved.sources)));
     res.flushHeaders();
     let full = "";
-    for await (const chunk of answerFromSearchStream({ question: message, results: resolved.sources, history })) {
+    for await (const chunk of answerFromSearchStream({ question: message, results: resolved.sources, history, useWebSearch })) {
       full += chunk;
       res.write(chunk);
     }
@@ -3161,7 +3176,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
     resultHtml = `
       <div class="chat-turn chat-turn-user"><p style="white-space:pre-wrap;">${escapeHtml(message)}</p></div>
       <div class="chat-turn chat-turn-assistant">
-        <p style="white-space:pre-wrap;">${escapeHtml(result.answer)}</p>
+        <p style="white-space:pre-wrap;">${linkifyHtml(escapeHtml(result.answer))}</p>
         ${renderSources(result.sources)}
       </div>`;
   } else if (result?.type === "draft_needs_clarification") {
@@ -3190,7 +3205,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
       return `
         <div class="chat-turn chat-turn-${h.role === "user" ? "user" : "assistant"}">
           ${h.account_email ? `<p class="section-help" style="margin:0 0 6px;">${escapeHtml(h.account_email)}</p>` : ""}
-          <p style="white-space:pre-wrap;">${escapeHtml(h.content)}</p>
+          <p style="white-space:pre-wrap;">${linkifyHtml(escapeHtml(h.content))}</p>
           ${renderSources(sources)}
         </div>`;
     })
@@ -3232,6 +3247,10 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
           <button type="button" id="chat-mic" class="mic-button" title="Voice input" aria-label="Start voice input" hidden>🎤</button>
         </div>
         <p class="section-help" id="chat-mic-status" hidden><span class="record-dot"></span> Listening…</p>
+        <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--ink-soft); margin-top:8px;">
+          <input type="checkbox" name="use_web_search" id="chat-web-search" value="1" />
+          Also search the web (for questions inbox context alone can't answer — adds latency)
+        </label>
       </div>
       <button type="submit" id="chat-submit">Ask</button>
     </form>
@@ -3400,6 +3419,17 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
           return '<div class="chat-turn chat-turn-user"><p style="white-space:pre-wrap;">' + escapeForHtml(message) + "</p></div>";
         }
 
+        // Mirrors the server's linkifyHtml(): only ever wraps already-escaped text in an
+        // anchor tag, so it can't introduce unescaped HTML from a web-search answer.
+        function linkify(escapedText) {
+          return escapedText.replace(/(https?:\/\/[^\s<]+)/g, function (url) {
+            var trailingMatch = url.match(/[).,;:!?]+$/);
+            var clean = trailingMatch ? url.slice(0, url.length - trailingMatch[0].length) : url;
+            var trailing = trailingMatch ? trailingMatch[0] : "";
+            return '<a href="' + clean + '" target="_blank" rel="noopener">' + clean + "</a>" + trailing;
+          });
+        }
+
         function renderJsonResult(data, ok, message) {
           if (!ok || data.error) {
             resultEl.innerHTML =
@@ -3448,7 +3478,12 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
           var full = "";
           function pump() {
             return reader.read().then(function (step) {
-              if (step.done) return;
+              if (step.done) {
+                // Only linkify once streaming's done — doing it token-by-token risks
+                // splitting a URL across chunks and matching it half-formed.
+                answerEl.innerHTML = linkify(escapeForHtml(full));
+                return;
+              }
               full += decoder.decode(step.value, { stream: true });
               answerEl.textContent = full;
               return pump();
@@ -3462,6 +3497,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
           var accountId = document.getElementById("chat-account").value;
           var message = document.getElementById("chat-message").value.trim();
           var intentOverride = document.getElementById("chat-intent").value;
+          var useWebSearch = document.getElementById("chat-web-search").checked;
           if (!accountId || !message) {
             resultEl.innerHTML =
               '<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">Pick an account and enter a question or request.</div>';
@@ -3476,7 +3512,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
           fetch("/chat/ask", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ account_id: accountId, message: message, intent_override: intentOverride }),
+            body: JSON.stringify({ account_id: accountId, message: message, intent_override: intentOverride, use_web_search: useWebSearch }),
           })
             .then(function (res) {
               var ctype = res.headers.get("Content-Type") || "";
