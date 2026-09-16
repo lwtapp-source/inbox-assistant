@@ -227,12 +227,64 @@ body {
 .sidebar {
   width: 248px;
   flex-shrink: 0;
-  background: var(--sidebar-bg);
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--sidebar-bg) 82%, white) 0%, var(--sidebar-bg) 60%);
   color: #eef1ef;
   padding: 28px 20px;
   display: flex;
   flex-direction: column;
   gap: 32px;
+}
+
+/* A few small dots drifting slowly downward -- a nod to the product's own name ("the
+   motion of separating what matters from what doesn't") rather than a generic glow.
+   Injected by renderLayout's inline script; pure CSS animation, paused entirely under
+   reduced motion. */
+.grain-field {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.grain {
+  position: absolute;
+  top: -8px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--accent-dark);
+  opacity: 0;
+  animation: sift-fall linear infinite;
+}
+
+@keyframes sift-fall {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  8% {
+    opacity: 0.35;
+  }
+  92% {
+    opacity: 0.18;
+  }
+  100% {
+    transform: translateY(640px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grain {
+    display: none;
+  }
+}
+
+.sidebar > *:not(.grain-field) {
+  position: relative;
+  z-index: 1;
 }
 
 .wordmark {
@@ -456,7 +508,8 @@ body {
 }
 
 .account-link.active {
-  background: rgba(255, 255, 255, 0.1);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent-dark) 24%, transparent), transparent);
+  box-shadow: inset 2px 0 0 var(--accent-dark);
   color: #ffffff;
   font-weight: 500;
 }
@@ -685,6 +738,7 @@ code {
 }
 
 .tile-priorities {
+  --tile-accent: var(--urgent);
   grid-column: span 7;
   grid-row: span 2;
 }
@@ -771,8 +825,11 @@ code {
 }
 
 .tile {
+  position: relative;
+  overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--border);
+  border-top: 3px solid var(--tile-accent, var(--border));
   border-radius: var(--radius);
   padding: 18px 20px;
   display: flex;
@@ -780,14 +837,74 @@ code {
   min-width: 0;
   text-decoration: none;
   color: var(--ink);
-  transition: border-color 0.15s ease;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.15s ease;
 }
 
-a.tile:hover {
+a.tile:hover,
+a.tile:focus-visible {
   border-color: var(--accent);
 }
 
+.tile:hover,
+a.tile:focus-visible {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 24px -8px rgba(0, 0, 0, 0.35);
+}
+
+.tile:hover .tile-glyph,
+a.tile:focus-visible .tile-glyph {
+  opacity: 0.16;
+  transform: scale(1.06) rotate(-3deg);
+}
+
+/* A faint watermark icon per tile, identifying it at a glance even before reading any
+   text -- nudges slightly on hover along with the tile's own lift, but stays quiet
+   (~10% opacity) so it never competes with the actual content sitting on top of it. */
+.tile-glyph {
+  position: absolute;
+  right: -10px;
+  bottom: -14px;
+  width: 92px;
+  height: 92px;
+  color: var(--tile-accent, var(--ink-faint));
+  opacity: 0.1;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  pointer-events: none;
+}
+
+.tile-head,
+.pq-list,
+.stat-row,
+.tile-chat h2,
+.tile-chat p,
+.chat-cta,
+.cat-row,
+.acct-row,
+.cal-list {
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile {
+    transition: border-color 0.15s ease;
+  }
+
+  .tile:hover,
+  a.tile:focus-visible {
+    transform: none;
+    box-shadow: none;
+  }
+
+  .tile:hover .tile-glyph,
+  a.tile:focus-visible .tile-glyph {
+    opacity: 0.1;
+    transform: none;
+  }
+}
+
 .tile-calendar {
+  --tile-accent: var(--accent);
   min-height: 0;
   /* Grid stretch alignment only helps a SHORTER sibling grow to match the row -- it
      can't cap this tile's own height when its own content (a long event list) is what's
@@ -877,6 +994,14 @@ a.tile:hover {
   grid-column: span 5;
 }
 
+.tile-invoices {
+  --tile-accent: var(--invoice);
+}
+
+.tile-meetings {
+  --tile-accent: var(--fyi);
+}
+
 .stat-row {
   display: flex;
   align-items: flex-end;
@@ -913,11 +1038,12 @@ a.tile:hover {
   justify-content: center;
   font-size: 14px;
   flex: 0 0 auto;
-  background: var(--accent-wash);
-  color: var(--accent-dark);
+  background: color-mix(in srgb, var(--tile-accent, var(--accent)) 18%, var(--surface));
+  color: var(--tile-accent, var(--accent-dark));
 }
 
 .tile-categories {
+  --tile-accent: var(--marketing);
   grid-column: span 4;
 }
 
@@ -960,6 +1086,7 @@ a.tile:hover {
 }
 
 .tile-chat {
+  --tile-accent: var(--accent);
   grid-column: span 4;
   background: var(--accent-wash);
   border-color: var(--accent-wash);
@@ -992,6 +1119,7 @@ a.tile:hover {
 }
 
 .tile-accounts {
+  --tile-accent: var(--follow-up);
   grid-column: span 4;
 }
 

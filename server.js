@@ -324,6 +324,7 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
   <div id="toast-container" aria-live="polite"></div>
   <div class="app">
     <aside class="sidebar">
+      <div class="grain-field" id="grain-field"></div>
       <div class="sidebar-header">
         <a href="/" style="text-decoration:none;">
           <div class="wordmark">Sift</div>
@@ -449,7 +450,10 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
             var mainEl = document.querySelector("main.main");
             mainEl.innerHTML = newMain.innerHTML;
             runScripts(mainEl);
-            if (newSidebar) document.querySelector(".sidebar").innerHTML = newSidebar.innerHTML;
+            if (newSidebar) {
+              document.querySelector(".sidebar").innerHTML = newSidebar.innerHTML;
+              if (window.spawnGrainField) window.spawnGrainField();
+            }
             if (push) window.history.pushState({}, "", url);
             lastPathAndSearch = window.location.pathname + window.location.search;
             window.scrollTo(0, 0);
@@ -562,6 +566,28 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
         if (sidebar) sidebar.classList.toggle("open");
       });
     })();
+  </script>
+
+  <script>
+    // A few small dots drifting slowly down the sidebar -- a nod to the product's own
+    // name/tagline rather than a generic accent glow. Re-run after every soft-nav
+    // sidebar swap (see window.navigate above), since that replaces the sidebar's
+    // innerHTML wholesale and would otherwise leave a new, empty #grain-field behind.
+    window.spawnGrainField = function () {
+      var field = document.getElementById("grain-field");
+      if (!field || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      field.innerHTML = "";
+      var count = 10;
+      for (var i = 0; i < count; i++) {
+        var g = document.createElement("div");
+        g.className = "grain";
+        g.style.left = Math.round(Math.random() * 100) + "%";
+        g.style.animationDuration = (14 + Math.random() * 10).toFixed(1) + "s";
+        g.style.animationDelay = "-" + (Math.random() * 20).toFixed(1) + "s";
+        field.appendChild(g);
+      }
+    };
+    window.spawnGrainField();
   </script>
 
   <script>
@@ -815,6 +841,7 @@ app.get("/", async (req, res) => {
     <div class="bento">
     <div class="bento-tiles">
       <section class="tile tile-priorities">
+        <svg class="tile-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
         <div class="tile-head">
           <h2>Top priorities</h2>
           ${priorityCount.count ? `<a href="/priorities">View all ${priorityCount.count} →</a>` : ""}
@@ -840,7 +867,8 @@ app.get("/", async (req, res) => {
         </div>
       </section>
 
-      <a class="tile tile-stat" href="/invoices">
+      <a class="tile tile-stat tile-invoices" href="/invoices">
+        <svg class="tile-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z"/><path d="M9 8h6M9 12h6"/></svg>
         <div class="tile-eyebrow">Invoices</div>
         <div class="stat-row">
           <div>
@@ -851,7 +879,8 @@ app.get("/", async (req, res) => {
         </div>
       </a>
 
-      <a class="tile tile-stat" href="/meetings">
+      <a class="tile tile-stat tile-meetings" href="/meetings">
+        <svg class="tile-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
         <div class="tile-eyebrow">Meetings</div>
         <div class="stat-row">
           <div>
@@ -869,6 +898,7 @@ app.get("/", async (req, res) => {
       </a>
 
       <a class="tile tile-chat" href="/chat">
+        <svg class="tile-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10Z"/></svg>
         <div>
           <h2>Chat</h2>
           <p>Ask a question across your inboxes, check your calendar, or draft something new.</p>
@@ -877,6 +907,7 @@ app.get("/", async (req, res) => {
       </a>
 
       <section class="tile tile-categories">
+        <svg class="tile-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 20V10M12 20V4M20 20v-7"/></svg>
         <div class="tile-eyebrow">Last 7 days, by category</div>
         ${CATEGORY_ORDER.map((c) => {
           const count = categoryCountByLabel[c.label] || 0;
@@ -891,6 +922,7 @@ app.get("/", async (req, res) => {
       </section>
 
       <section class="tile tile-accounts">
+        <svg class="tile-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3 21a6 6 0 0 1 12 0M17 8l3-3 3 3M17 16l3 3 3-3"/></svg>
         <div class="tile-eyebrow">Connected accounts</div>
         ${
           pollHealthAccounts.length
@@ -910,6 +942,7 @@ app.get("/", async (req, res) => {
     </div>
 
       <section class="tile tile-calendar">
+        <svg class="tile-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
         <div class="tile-eyebrow">Upcoming (next ${CALENDAR_WINDOW_DAYS} days)</div>
         <div class="cal-list">${calendarHtml}</div>
       </section>
