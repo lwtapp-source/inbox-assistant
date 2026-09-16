@@ -23,6 +23,13 @@ import { uploadAudio, submitTranscription } from "./src/assemblyai.js";
 import { checkPendingMeetings } from "./src/meetingCheck.js";
 import { searchSimilar } from "./src/semanticSearch.js";
 import { scanForSearchIndex } from "./src/searchIndexScan.js";
+import {
+  cleanMemoryText,
+  saveMemory,
+  listAllMemories,
+  deleteMemory,
+  getRelevantMemoriesContext,
+} from "./src/chatMemory.js";
 import { listCustomFiles, getCustomFilesContext } from "./src/customFiles.js";
 import {
   classifyChatIntent,
@@ -2884,10 +2891,12 @@ app.post("/invoices/:id/edit", async (req, res) => {
 app.get("/chat", async (req, res) => {
   const accounts = await getAccounts();
   const history = await getChatHistory();
+  const memories = await listAllMemories();
   const body = renderChatPage({
     accounts,
     selectedAccountId: null,
     history,
+    memories,
     result: null,
     indexing: !!req.query.indexing,
   });
@@ -2896,6 +2905,11 @@ app.get("/chat", async (req, res) => {
 
 app.post("/chat/clear", async (req, res) => {
   await pool.query(`DELETE FROM chat_messages`);
+  res.redirect("/chat");
+});
+
+app.post("/chat/memories/:id/delete", async (req, res) => {
+  await deleteMemory(req.params.id);
   res.redirect("/chat");
 });
 
@@ -2923,9 +2937,22 @@ app.post("/chat/build-index", async (req, res) => {
 // connected account) is searched and results are merged/tagged by which inbox they came
 // from. Drafting still needs one specific mailbox to create the draft in, so a draft intent
 // with no account picked comes back as a clarification asking the user to choose one.
-// `override` forces the intent instead of classifying ("search" | "draft" | "auto").
+// `override` forces the intent instead of classifying ("search" | "draft" | "remember" |
+// "auto"). "remember" stores `message` (minus a leading "remember that/to") as a long-term
+// preference scoped to the selected account, or to every account when "All accounts" is
+// selected (`account` null) — see src/chatMemory.js.
 async function resolveChatIntent({ account, provider, allAccounts, message, history, override }) {
   const intent = override && override !== "auto" ? override : await classifyChatIntent(message, history);
+
+  if (intent === "remember") {
+    const scopeEmail = account ? account.email : null;
+    const content = cleanMemoryText(message);
+    const saved = await saveMemory(scopeEmail, content);
+    if (!saved) {
+      return { type: "remember_unavailable" };
+    }
+    return { type: "remembered", content, scopeEmail };
+  }
 
   if (intent === "search") {
     if (!account) {
@@ -2974,12 +3001,14 @@ async function resolveChatIntent({ account, provider, allAccounts, message, hist
   }
 
   const filesContext = await getCustomFilesContext(account.id);
+  const memoriesContext = await getRelevantMemoriesContext(account.email, message);
   const bodyText = await draftFromScratch({
     voiceProfile: account.voice_profile,
     toneInstructions: account.tone_instructions,
     filesContext,
     instructions: extracted.instructions || message,
     learnedStyleNotes: account.learned_style_notes,
+    memoriesContext,
   });
   const finalBody = account.signature?.trim()
     ? `${bodyText}\n\n${account.signature.trim()}`
@@ -3034,7 +3063,8 @@ app.post("/chat", async (req, res) => {
         const history = await getChatHistory(6);
         result = await resolveChatIntent({ ...selection, message, history, override });
         if (result.type === "search") {
-          const answer = await answerFromSearch({ question: message, results: result.sources, history, useWebSearch });
+          const memoriesContext = await getRelevantMemoriesContext(selection.account?.email, message);
+          const answer = await answerFromSearch({ question: message, results: result.sources, history, useWebSearch, memoriesContext });
           result = { type: "search", answer, sources: result.sources };
           await saveChatMessage(selection.account?.email, "user", message);
           await saveChatMessage(selection.account?.email, "assistant", answer, result.sources);
@@ -3045,6 +3075,9 @@ app.post("/chat", async (req, res) => {
             "assistant",
             `Drafted an email to ${result.to} (subject: ${result.subject}):\n\n${result.body}`
           );
+        } else if (result.type === "remembered") {
+          await saveChatMessage(selection.account?.email, "user", message);
+          await saveChatMessage(selection.account?.email, "assistant", `Got it, I'll remember: ${result.content}`);
         }
       } catch (err) {
         console.error("Chat request failed:", err);
@@ -3053,14 +3086,16 @@ app.post("/chat", async (req, res) => {
     }
   }
 
-  // Successful search/draft turns are already persisted, so they'll show up via `history`
-  // below — render them there instead of a second time via `result`, and clear the
-  // textarea since the request's been answered.
-  const displayMessage = result?.type === "search" || result?.type === "draft_created" ? "" : message;
-  const displayResult = result?.type === "search" || result?.type === "draft_created" ? null : result;
+  // Successful search/draft/remember turns are already persisted, so they'll show up via
+  // `history` below — render them there instead of a second time via `result`, and clear
+  // the textarea since the request's been answered.
+  const persistedTypes = ["search", "draft_created", "remembered"];
+  const displayMessage = persistedTypes.includes(result?.type) ? "" : message;
+  const displayResult = persistedTypes.includes(result?.type) ? null : result;
 
   const history = await getChatHistory();
-  const body = renderChatPage({ accounts, selectedAccountId: accountId, message: displayMessage, result: displayResult, history });
+  const memories = await listAllMemories();
+  const body = renderChatPage({ accounts, selectedAccountId: accountId, message: displayMessage, result: displayResult, history, memories });
   res.send(await renderLayout({ title: "Chat", activeAccountId: null, accounts, body, activePage: "chat" }));
 });
 
@@ -3095,15 +3130,19 @@ app.post("/chat/ask", express.json(), async (req, res) => {
           "assistant",
           `Drafted an email to ${resolved.to} (subject: ${resolved.subject}):\n\n${resolved.body}`
         );
+      } else if (resolved.type === "remembered") {
+        await saveChatMessage(selection.account?.email, "user", message);
+        await saveChatMessage(selection.account?.email, "assistant", `Got it, I'll remember: ${resolved.content}`);
       }
       return res.json(resolved);
     }
 
+    const memoriesContext = await getRelevantMemoriesContext(selection.account?.email, message);
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("X-Chat-Sources", encodeURIComponent(JSON.stringify(resolved.sources)));
     res.flushHeaders();
     let full = "";
-    for await (const chunk of answerFromSearchStream({ question: message, results: resolved.sources, history, useWebSearch })) {
+    for await (const chunk of answerFromSearchStream({ question: message, results: resolved.sources, history, useWebSearch, memoriesContext })) {
       full += chunk;
       res.write(chunk);
     }
@@ -3120,7 +3159,7 @@ app.post("/chat/ask", express.json(), async (req, res) => {
   }
 });
 
-function renderChatPage({ accounts, selectedAccountId, message, result, history, indexing }) {
+function renderChatPage({ accounts, selectedAccountId, message, result, history, memories, indexing }) {
   const accountOptions = accounts
     .map(
       (a) =>
@@ -3190,6 +3229,19 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
         <p style="white-space:pre-wrap; border:1px solid var(--border); border-radius:var(--radius); padding:14px; background:var(--surface);">${escapeHtml(result.body)}</p>
         ${result.webLink ? `<p><a href="${result.webLink}" target="_blank" rel="noopener">Open Drafts →</a></p>` : ""}
       </div>`;
+  } else if (result?.type === "remembered") {
+    resultHtml = `
+      <div class="chat-turn chat-turn-user"><p style="white-space:pre-wrap;">${escapeHtml(message)}</p></div>
+      <div class="chat-turn chat-turn-assistant">
+        <h2>Got it</h2>
+        <p class="section-help">I'll remember: ${escapeHtml(result.content)}${result.scopeEmail ? ` (for ${escapeHtml(result.scopeEmail)})` : " (for every inbox)"}</p>
+      </div>`;
+  } else if (result?.type === "remember_unavailable") {
+    resultHtml = `
+      <div class="chat-turn chat-turn-assistant">
+        <h2>Long-term memory isn't set up</h2>
+        <p class="section-help">This needs the same embedding API key semantic search uses — that preference wasn't saved.</p>
+      </div>`;
   }
 
   const historyHtml = (history || [])
@@ -3233,14 +3285,16 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
             <option value="auto">Auto-detect</option>
             <option value="search">Find something</option>
             <option value="draft">Draft an email</option>
+            <option value="remember">Remember this</option>
           </select>
         </div>
       </div>
       <div class="section">
         <h2>Your request</h2>
         <p class="section-help">
-          Examples: "Find the email thread about the marketing proposal" or "Draft an email
-          to sarah@example.com about rescheduling Thursday's appointment."
+          Examples: "Find the email thread about the marketing proposal", "Draft an email
+          to sarah@example.com about rescheduling Thursday's appointment", or "Remember
+          that I always CC my manager on client emails."
         </p>
         <div class="chat-input-wrap">
           <textarea name="message" id="chat-message" rows="4">${escapeHtml(message) ?? ""}</textarea>
@@ -3274,6 +3328,32 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
         </select>
         <button type="submit">Build search index</button>
       </form>
+    </div>
+
+    <div class="section">
+      <h2>Remembered preferences</h2>
+      <p class="section-help">
+        Preferences saved with "Remember this" — surfaced automatically in future search
+        answers and drafts when relevant, not just replayed in this conversation.
+      </p>
+      ${
+        memories?.length
+          ? `<div class="file-list">${memories
+              .map(
+                (m) => `
+        <div class="file-row">
+          <div>
+            <div class="file-name">${escapeHtml(m.content)}</div>
+            <div class="file-meta">${m.account_email ? escapeHtml(m.account_email) : "Every inbox"}</div>
+          </div>
+          <form method="POST" action="/chat/memories/${m.id}/delete" onsubmit="return confirm('Forget this preference?');">
+            <button type="submit" class="link-button danger">Forget</button>
+          </form>
+        </div>`
+              )
+              .join("")}</div>`
+          : `<p class="section-help">Nothing remembered yet.</p>`
+      }
     </div>
 
     <div class="section" style="display:flex; justify-content:space-between; align-items:center;">
@@ -3462,6 +3542,17 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
                 ? '<p><a href="' + data.webLink + '" target="_blank" rel="noopener">Open Drafts →</a></p>'
                 : "") +
               "</div>";
+          } else if (data.type === "remembered") {
+            resultEl.innerHTML =
+              userTurn(message) +
+              '<div class="chat-turn chat-turn-assistant"><h2>Got it</h2><p class="section-help">I\'ll remember: ' +
+              escapeForHtml(data.content) +
+              (data.scopeEmail ? " (for " + escapeForHtml(data.scopeEmail) + ")" : " (for every inbox)") +
+              "</p></div>";
+          } else if (data.type === "remember_unavailable") {
+            resultEl.innerHTML =
+              '<div class="chat-turn chat-turn-assistant"><h2>Long-term memory isn\'t set up</h2><p class="section-help">' +
+              "This needs the same embedding API key semantic search uses — that preference wasn't saved.</p></div>";
           }
         }
 

@@ -284,4 +284,21 @@ export async function initSchema() {
   } catch (err) {
     console.error("Could not create email_embeddings table (semantic search will be unavailable):", err.message);
   }
+
+  // Long-term Chat memory: explicit "remember that..." preferences, retrieved by meaning
+  // (not recency) so they surface whenever relevant, not just in the conversation they were
+  // stated in. Same vector-extension isolation as email_embeddings above.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS chat_memories (
+        id SERIAL PRIMARY KEY,
+        account_email TEXT,        -- NULL = applies to every inbox ("All accounts" scope)
+        content TEXT NOT NULL,
+        embedding vector(512),
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+    `);
+  } catch (err) {
+    console.error("Could not create chat_memories table (long-term Chat memory will be unavailable):", err.message);
+  }
 }

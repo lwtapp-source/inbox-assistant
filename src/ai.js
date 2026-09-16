@@ -164,9 +164,10 @@ Write only the reply body text, no subject line, no commentary.`,
 
 // ---------- Chat: search / draft-from-scratch ----------
 
-// Classifies a Chat message as either a search/question or a request to draft a new email.
-// `history` (recent {role, content} turns) helps classify follow-ups like "send that as an
-// email" that only make sense in light of what was just discussed.
+// Classifies a Chat message as a search/question, a request to draft a new email, or a
+// preference to remember long-term ("remember that I always CC my manager"). `history`
+// (recent {role, content} turns) helps classify follow-ups like "send that as an email"
+// that only make sense in light of what was just discussed.
 export async function classifyChatIntent(message, history = []) {
   const historyText = history.length
     ? `\n\nRecent conversation, for context only:\n${history
@@ -179,8 +180,11 @@ export async function classifyChatIntent(message, history = []) {
     messages: [
       {
         role: "user",
-        content: `Classify this request as either "search" (a question to answer by looking
-through the inbox) or "draft" (a request to write a new email from scratch).
+        content: `Classify this request as exactly one of:
+"search" — a question to answer by looking through the inbox
+"draft" — a request to write a new email from scratch
+"remember" — asking to remember a preference/fact for future use (e.g. "remember that I
+  always CC my manager", "from now on, sign off as..."), NOT a question or draft request
 Reply with only the one word.
 
 Request: ${message}${historyText}`,
@@ -188,7 +192,7 @@ Request: ${message}${historyText}`,
     ],
   });
   const label = msg.content[0]?.text?.trim().toLowerCase();
-  return label === "draft" ? "draft" : "search";
+  return label === "draft" || label === "remember" ? label : "search";
 }
 
 // Extracts recipient/subject/instructions from a draft-from-scratch chat request.
@@ -242,7 +246,7 @@ function extractAnswerText(content) {
 // back?") can resolve pronouns/references against the actual conversation. `useWebSearch`
 // lets Claude supplement the inbox results with a live web search when the question needs
 // outside context (e.g. "what's the return policy" from a vendor's site, not just the email).
-export async function answerFromSearch({ question, results, history = [], useWebSearch = false }) {
+export async function answerFromSearch({ question, results, history = [], useWebSearch = false, memoriesContext = "" }) {
   const context = results.length
     ? results
         .map(
@@ -267,7 +271,7 @@ export async function answerFromSearch({ question, results, history = [], useWeb
         content: `Answer this question using the email search results below. Cite which
 email(s) you're drawing from by their [number]. If the results don't answer the question,
 say so plainly rather than guessing.${webNote}
-
+${memoriesContext}
 QUESTION: ${question}
 
 SEARCH RESULTS:
@@ -284,7 +288,7 @@ ${context}`,
 // tool call happens mid-stream, only its resulting text blocks emit text_delta events
 // (the search itself doesn't stream tokens), so this naturally still yields just the
 // visible answer text with no extra handling.
-export async function* answerFromSearchStream({ question, results, history = [], useWebSearch = false }) {
+export async function* answerFromSearchStream({ question, results, history = [], useWebSearch = false, memoriesContext = "" }) {
   const context = results.length
     ? results
         .map(
@@ -309,7 +313,7 @@ export async function* answerFromSearchStream({ question, results, history = [],
         content: `Answer this question using the email search results below. Cite which
 email(s) you're drawing from by their [number]. If the results don't answer the question,
 say so plainly rather than guessing.${webNote}
-
+${memoriesContext}
 QUESTION: ${question}
 
 SEARCH RESULTS:
@@ -333,6 +337,7 @@ export async function draftFromScratch({
   filesContext,
   instructions,
   learnedStyleNotes,
+  memoriesContext,
 }) {
   const toneBlock = toneInstructions?.trim()
     ? `\nThe inbox owner has given this explicit guidance on how they like to write — follow it:\n${toneInstructions.trim()}\n`
@@ -352,7 +357,7 @@ export async function draftFromScratch({
 
 VOICE PROFILE:
 ${voiceProfile || "No profile yet — use a neutral, professional tone."}
-${toneBlock}${learnedBlock}${filesContext || ""}
+${toneBlock}${learnedBlock}${filesContext || ""}${memoriesContext || ""}
 WHAT THE EMAIL SHOULD COVER:
 ${instructions}
 
