@@ -741,11 +741,61 @@ app.get("/", async (req, res) => {
     return `${Math.round(hours / 24)}d ago`;
   }
 
+  // Appointments calendar, next 30 days across every connected account -- a live
+  // provider call each time (same reasoning as src/calendarContext.js: a calendar
+  // changes constantly, and there's no shared index like email search's embeddings to
+  // reuse), but tolerant of any one account's calendar failing so it can't take the
+  // whole home page down.
+  const CALENDAR_WINDOW_DAYS = 30;
+  const calendarTimeMin = new Date().toISOString();
+  const calendarTimeMax = new Date(Date.now() + CALENDAR_WINDOW_DAYS * 86400000).toISOString();
+  const calendarEvents = (
+    await Promise.all(
+      accounts.map(async (acc) => {
+        const provider = chatProviders[acc.provider];
+        if (!provider?.listCalendarEvents) return [];
+        try {
+          const events = await provider.listCalendarEvents(acc, calendarTimeMin, calendarTimeMax);
+          return events.map((e) => ({ ...e, accountEmail: acc.email }));
+        } catch (err) {
+          console.error(`Calendar lookup failed for ${acc.email}:`, err.message);
+          return [];
+        }
+      })
+    )
+  )
+    .flat()
+    .sort((a, b) => new Date(a.start) - new Date(b.start));
+
+  const calendarHtml = calendarEvents.length
+    ? calendarEvents
+        .map((e) => {
+          const start = new Date(e.start);
+          const timeRange = `${start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}${
+            e.end ? ` – ${new Date(e.end).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""
+          }`;
+          return `
+        <div class="cal-row">
+          <div class="cal-date">
+            <div class="cal-date-day">${start.toLocaleDateString("en-US", { day: "numeric" })}</div>
+            <div class="cal-date-month">${start.toLocaleDateString("en-US", { month: "short" })}</div>
+          </div>
+          <div class="cal-body">
+            <div class="cal-title">${escapeHtml(e.title) || "(untitled)"}</div>
+            <div class="cal-time">${timeRange}${accounts.length > 1 ? ` · ${escapeHtml(e.accountEmail)}` : ""}</div>
+            ${e.location ? `<div class="cal-location">${escapeHtml(e.location)}</div>` : ""}
+          </div>
+        </div>`;
+        })
+        .join("")
+    : `<p class="section-help" style="margin:0;">Nothing on the calendar in the next ${CALENDAR_WINDOW_DAYS} days.</p>`;
+
   const body = `
     <h1>Home</h1>
     <p class="subtitle">At a glance across every connected inbox.</p>
 
     <div class="bento">
+    <div class="bento-tiles">
       <a class="tile tile-stat" href="/priorities">
         <div class="tile-eyebrow">Top priorities</div>
         <div class="stat-row">
@@ -824,7 +874,37 @@ app.get("/", async (req, res) => {
             : `<p class="section-help" style="margin:0;">No accounts connected yet.</p>`
         }
       </section>
-    </div>`;
+    </div>
+
+      <section class="tile tile-calendar">
+        <div class="tile-eyebrow">Upcoming (next ${CALENDAR_WINDOW_DAYS} days)</div>
+        <div class="cal-list">${calendarHtml}</div>
+      </section>
+    </div>
+
+    <script>
+      (function () {
+        // CSS grid stretch only helps the *shorter* sibling grow to match the row -- it
+        // can't cap the calendar's own height when its own content (the event list) is
+        // what's tallest. Measuring the tiles column directly and applying it as a
+        // max-height is what actually makes the calendar's internal scroll engage at the
+        // right point instead of the whole tile just growing to fit every event.
+        var tilesArea = document.querySelector(".bento-tiles");
+        var calendarTile = document.querySelector(".tile-calendar");
+        if (!tilesArea || !calendarTile) return;
+
+        function syncHeight() {
+          if (window.innerWidth <= 980) {
+            calendarTile.style.maxHeight = "";
+            return;
+          }
+          calendarTile.style.maxHeight = tilesArea.getBoundingClientRect().height + "px";
+        }
+
+        syncHeight();
+        window.addEventListener("resize", syncHeight);
+      })();
+    </script>`;
 
   res.send(await renderLayout({ title: "Home", activeAccountId: null, accounts, body, activePage: "home" }));
 });

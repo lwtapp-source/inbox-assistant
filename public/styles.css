@@ -617,16 +617,25 @@ code {
 }
 
 /* ---------- Dashboard bento ---------- */
-/* Home page overview: six equal-weight tiles, three per row. Top Priorities is a stat
-   tile like Invoices/Meetings (a count + link), not a preview list -- the actual list
-   lives on its own page (/priorities), so nothing here duplicates content shown there. */
+/* Home page overview: six equal-weight stat/summary tiles on the left (three per row --
+   Top Priorities is a stat tile like Invoices/Meetings, not a preview list, since the
+   actual list lives on its own page at /priorities), plus a calendar column on the
+   right that stretches to match the full height of those two rows (CSS grid's default
+   stretch alignment -- no fixed height needed) with its own internal scroll. */
 
 .bento {
   display: grid;
-  grid-template-columns: repeat(12, 1fr);
-  grid-auto-rows: minmax(72px, auto);
+  grid-template-columns: 1fr 300px;
   gap: 12px;
   margin-bottom: 28px;
+  align-items: stretch;
+}
+
+.bento-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: minmax(72px, auto);
+  gap: 12px;
 }
 
 .tile {
@@ -644,6 +653,84 @@ code {
 
 a.tile:hover {
   border-color: var(--accent);
+}
+
+.tile-calendar {
+  min-height: 0;
+  /* Grid stretch alignment only helps a SHORTER sibling grow to match the row -- it
+     can't cap this tile's own height when its own content (a long event list) is what's
+     tallest in the row. A fallback cap here (refined to the exact left-column height by
+     the inline script below) is what actually makes .cal-list's scroll engage instead of
+     the tile just growing to fit every event. */
+  max-height: 600px;
+  overflow: hidden;
+}
+
+.cal-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin-right: -8px;
+  padding-right: 8px;
+}
+
+.cal-row {
+  display: flex;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.cal-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.cal-date {
+  flex: 0 0 auto;
+  width: 38px;
+  text-align: center;
+}
+
+.cal-date-day {
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 600;
+  font-size: 17px;
+  line-height: 1.1;
+  color: var(--ink);
+}
+
+.cal-date-month {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ink-faint);
+}
+
+.cal-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.cal-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  overflow-wrap: break-word;
+}
+
+.cal-time {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
+
+.cal-location {
+  font-size: 12px;
+  color: var(--ink-faint);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tile-eyebrow {
@@ -820,11 +907,18 @@ a.tile:hover {
 }
 
 @media (max-width: 980px) {
-  .tile-stat,
-  .tile-categories,
-  .tile-chat,
-  .tile-accounts {
-    grid-column: span 12;
+  .bento {
+    grid-template-columns: 1fr;
+  }
+
+  .bento-tiles {
+    grid-template-columns: 1fr;
+  }
+
+  /* No sibling to stretch-match once the grid stacks to one column, so the calendar
+     needs an explicit cap here or its internal scroll would never kick in. */
+  .tile-calendar {
+    max-height: 360px;
   }
 }
 
