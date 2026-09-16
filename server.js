@@ -1622,13 +1622,55 @@ const MEETING_STATUS_LABEL = {
 
 app.get("/meetings", async (req, res) => {
   const accounts = await getAccounts();
-  const { rows: meetings } = await pool.query(
-    `SELECT m.*, a.email AS account_email, a.timezone AS account_timezone
-     FROM meetings m
-     JOIN accounts a ON a.id = m.account_id
-     ORDER BY m.started_at DESC
-     LIMIT 50`
-  );
+
+  const allAccountIds = accounts.map((a) => a.id);
+  let selectedAccountIds;
+  if (req.query.filtered) {
+    const raw = req.query.accounts;
+    const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    selectedAccountIds = list.map((s) => Number(s)).filter((n) => allAccountIds.includes(n));
+  } else {
+    selectedAccountIds = allAccountIds;
+  }
+
+  const PAGE_SIZE = 50;
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const offset = (page - 1) * PAGE_SIZE;
+
+  const { rows: meetings } = selectedAccountIds.length
+    ? await pool.query(
+        `SELECT m.*, a.email AS account_email, a.timezone AS account_timezone
+         FROM meetings m
+         JOIN accounts a ON a.id = m.account_id
+         WHERE m.account_id = ANY($1)
+         ORDER BY m.started_at DESC
+         LIMIT $2 OFFSET $3`,
+        [selectedAccountIds, PAGE_SIZE, offset]
+      )
+    : { rows: [] };
+
+  const {
+    rows: [{ count: totalCount }],
+  } = selectedAccountIds.length
+    ? await pool.query(`SELECT COUNT(*)::int AS count FROM meetings m WHERE m.account_id = ANY($1)`, [
+        selectedAccountIds,
+      ])
+    : { rows: [{ count: 0 }] };
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const rangeStart = totalCount === 0 ? 0 : offset + 1;
+  const rangeEnd = Math.min(offset + PAGE_SIZE, totalCount);
+
+  function buildMeetingListUrl(targetPage) {
+    const params = new URLSearchParams();
+    if (req.query.filtered) {
+      params.set("filtered", "1");
+      for (const id of selectedAccountIds) params.append("accounts", String(id));
+    }
+    if (targetPage > 1) params.set("page", String(targetPage));
+    const qs = params.toString();
+    return qs ? `/meetings?${qs}` : "/meetings";
+  }
 
   const meetingIds = meetings.map((m) => m.id);
   const { rows: actionItemRows } = meetingIds.length
@@ -1666,7 +1708,8 @@ app.get("/meetings", async (req, res) => {
             : "";
 
           return `
-        <div class="priority-row">
+        <div class="priority-row" data-id="${m.id}">
+          <input type="checkbox" class="bulk-select" aria-label="Select this meeting" style="margin-top:3px;" />
           <div class="priority-main">
             <div class="priority-top">
               <span class="priority-subject">${escapeHtml(m.title) || "(untitled meeting)"}</span>
@@ -1741,7 +1784,138 @@ app.get("/meetings", async (req, res) => {
         : `<div class="empty-state">Connect an account first from the home page before recording a meeting.</div>`
     }
 
+    <form method="GET" action="/meetings" id="meeting-filter-form" style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:14px;">
+      <input type="hidden" name="filtered" value="1" />
+      ${
+        accounts.length > 1
+          ? accounts
+              .map(
+                (a) => `
+             <label style="display:flex; align-items:center; gap:6px; font-size:13.5px; cursor:pointer;">
+               <input type="checkbox" name="accounts" value="${a.id}" ${
+                 selectedAccountIds.includes(a.id) ? "checked" : ""
+               } onchange="document.getElementById('meeting-filter-form').submit()" />
+               <span class="account-dot ${a.provider}"></span>${escapeHtml(a.email)}
+             </label>`
+              )
+              .join("")
+          : accounts.map((a) => `<input type="hidden" name="accounts" value="${a.id}" />`).join("")
+      }
+    </form>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        ${
+          meetings.length
+            ? `<label style="display:flex; align-items:center; gap:6px; font-size:13.5px; cursor:pointer;">
+                 <input type="checkbox" id="meeting-select-all" /> Select all
+               </label>`
+            : ""
+        }
+        <span class="section-help" style="margin:0;">
+          ${totalCount === 0 ? "" : `Showing ${rangeStart}-${rangeEnd} of ${totalCount}`}
+        </span>
+        <span id="meeting-bulk-toolbar" class="bulk-toolbar" hidden>
+          <span id="meeting-bulk-count" class="section-help" style="margin:0;"></span>
+          <button type="button" id="meeting-bulk-delete" class="link-button danger">Delete</button>
+        </span>
+      </div>
+      <div style="display:flex; gap:16px; align-items:center;">
+        ${
+          page > 1
+            ? `<a href="${buildMeetingListUrl(page - 1)}">← Previous 50</a>`
+            : `<span class="section-help" style="margin:0; opacity:0.4;">← Previous 50</span>`
+        }
+        ${
+          page < totalPages
+            ? `<a href="${buildMeetingListUrl(page + 1)}">Next 50 →</a>`
+            : `<span class="section-help" style="margin:0; opacity:0.4;">Next 50 →</span>`
+        }
+      </div>
+    </div>
+
     <div class="priority-list">${meetingRows}</div>
+
+    <script>
+      (function () {
+        var bulkList = document.querySelector(".priority-list");
+        if (bulkList) {
+          var selectAllCheckbox = document.getElementById("meeting-select-all");
+          var bulkToolbar = document.getElementById("meeting-bulk-toolbar");
+          var bulkCount = document.getElementById("meeting-bulk-count");
+          var bulkDeleteBtn = document.getElementById("meeting-bulk-delete");
+
+          var getBulkRows = function () {
+            return Array.from(bulkList.querySelectorAll(".priority-row"));
+          };
+          var getSelectedIds = function () {
+            return getBulkRows()
+              .filter(function (row) {
+                var cb = row.querySelector(".bulk-select");
+                return cb && cb.checked;
+              })
+              .map(function (row) {
+                return row.getAttribute("data-id");
+              });
+          };
+          var updateBulkToolbar = function () {
+            var ids = getSelectedIds();
+            var allCheckboxes = getBulkRows().map(function (row) { return row.querySelector(".bulk-select"); }).filter(Boolean);
+            if (bulkToolbar) bulkToolbar.hidden = ids.length === 0;
+            if (bulkCount) bulkCount.textContent = ids.length + " selected";
+            if (selectAllCheckbox) {
+              selectAllCheckbox.checked = allCheckboxes.length > 0 && ids.length === allCheckboxes.length;
+              selectAllCheckbox.indeterminate = ids.length > 0 && ids.length < allCheckboxes.length;
+            }
+          };
+
+          bulkList.addEventListener("change", function (e) {
+            if (e.target.classList.contains("bulk-select")) updateBulkToolbar();
+          });
+
+          if (selectAllCheckbox) {
+            selectAllCheckbox.addEventListener("change", function () {
+              getBulkRows().forEach(function (row) {
+                var cb = row.querySelector(".bulk-select");
+                if (cb) cb.checked = selectAllCheckbox.checked;
+              });
+              updateBulkToolbar();
+            });
+          }
+
+          if (bulkDeleteBtn) {
+            bulkDeleteBtn.addEventListener("click", async function () {
+              var ids = getSelectedIds();
+              if (!ids.length) return;
+              var confirmed = confirm(
+                "Permanently delete " + ids.length + " selected meeting" + (ids.length === 1 ? "" : "s") +
+                "? The transcript and summary only exist here — this cannot be undone."
+              );
+              if (!confirmed) return;
+              try {
+                var res = await fetch("/meetings/bulk", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ ids: ids, action: "delete" }),
+                });
+                if (!res.ok) throw new Error("Request failed: " + res.status);
+                ids.forEach(function (id) {
+                  var row = bulkList.querySelector('.priority-row[data-id="' + id + '"]');
+                  if (row) row.remove();
+                });
+                if (!bulkList.querySelector(".priority-row")) {
+                  bulkList.innerHTML = '<div class="empty-state" style="padding:20px 0;">No meetings recorded yet.</div>';
+                }
+                updateBulkToolbar();
+              } catch (err) {
+                console.error(err);
+                alert("Something went wrong — please try again.");
+              }
+            });
+          }
+        }
+      })();
+    </script>
 
     <script>
       (function () {
@@ -1910,6 +2084,15 @@ app.post("/meetings/record", uploadAudioFile.single("audio"), async (req, res) =
 app.post("/meetings/:id/delete", async (req, res) => {
   await pool.query(`DELETE FROM meetings WHERE id = $1`, [req.params.id]);
   res.redirect(withToast("/meetings", "Meeting deleted"));
+});
+
+app.post("/meetings/bulk", express.json(), async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
+  if (!ids.length || req.body?.action !== "delete") {
+    return res.status(400).json({ ok: false, error: "Invalid request" });
+  }
+  await pool.query(`DELETE FROM meetings WHERE id = ANY($1)`, [ids]);
+  res.sendStatus(200);
 });
 
 app.post("/meetings/action-items/:id/toggle", async (req, res) => {
