@@ -57,9 +57,20 @@ export async function handleOAuthCallback(code) {
   return rows[0];
 }
 
-// Exchanges the stored refresh_token for a fresh access_token.
-// Called per-poll rather than cached, since access tokens are short-lived (~1hr).
-export async function getAccessToken(account) {
+// Every graphFetch call used to invoke this fresh, with no caching at all -- wasteful
+// (an access token is good for ~1hr) and actively unsafe: Microsoft rotates the refresh
+// token on every exchange, so two calls for the same account close together (e.g. this
+// account's regular poll cycle overlapping a Home-page calendar fetch, or just two page
+// loads in quick succession) raced to consume the same stored refresh_token, and
+// whichever lost got AADSTS9002313 (invalid_grant) trying to use a token Microsoft had
+// already invalidated. accessTokenCache avoids re-exchanging at all while the access
+// token is still valid; refreshInFlight makes concurrent callers that DO need a new one
+// share a single exchange instead of racing. In-memory only, fine for a single-instance
+// service (see numInstances: 1 in render.yaml) -- doesn't need to survive a restart.
+const accessTokenCache = new Map(); // account.id -> { accessToken, expiresAt }
+const refreshInFlight = new Map(); // account.id -> Promise<string>
+
+async function exchangeRefreshToken(account) {
   const res = await fetch(`${AUTH_BASE}/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -78,11 +89,32 @@ export async function getAccessToken(account) {
   // Microsoft rotates refresh tokens on use — persist the new one or the account
   // will stop working once the old one expires.
   if (data.refresh_token && data.refresh_token !== account.refresh_token) {
+    account.refresh_token = data.refresh_token;
     await pool.query(`UPDATE accounts SET refresh_token = $1 WHERE id = $2`, [
       data.refresh_token,
       account.id,
     ]);
   }
 
+  accessTokenCache.set(account.id, {
+    accessToken: data.access_token,
+    // Refresh a couple minutes early rather than cutting it exactly at the real expiry.
+    expiresAt: Date.now() + (data.expires_in - 120) * 1000,
+  });
+
   return data.access_token;
+}
+
+// Exchanges the stored refresh_token for a fresh access_token, reusing a cached one
+// while it's still valid and de-duplicating concurrent refreshes for the same account.
+export async function getAccessToken(account) {
+  const cached = accessTokenCache.get(account.id);
+  if (cached && cached.expiresAt > Date.now()) return cached.accessToken;
+
+  const inFlight = refreshInFlight.get(account.id);
+  if (inFlight) return inFlight;
+
+  const promise = exchangeRefreshToken(account).finally(() => refreshInFlight.delete(account.id));
+  refreshInFlight.set(account.id, promise);
+  return promise;
 }
