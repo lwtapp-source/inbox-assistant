@@ -2503,13 +2503,14 @@ app.get("/invoices", async (req, res) => {
     : { rows: [] };
 
   const {
-    rows: [{ count: totalCount }],
+    rows: [{ count: totalCount, total: totalAmount }],
   } = selectedAccountIds.length
     ? await pool.query(
-        `SELECT COUNT(*)::int AS count FROM invoices inv WHERE inv.paid = $1 AND inv.account_id = ANY($2)`,
+        `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount), 0)::float AS total
+         FROM invoices inv WHERE inv.paid = $1 AND inv.account_id = ANY($2)`,
         [showPaid, selectedAccountIds]
       )
-    : { rows: [{ count: 0 }] };
+    : { rows: [{ count: 0, total: 0 }] };
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const rangeStart = totalCount === 0 ? 0 : offset + 1;
@@ -2634,7 +2635,11 @@ app.get("/invoices", async (req, res) => {
             : ""
         }
         <span class="section-help" style="margin:0;">
-          ${totalCount === 0 ? "" : `Showing ${rangeStart}-${rangeEnd} of ${totalCount}`}
+          ${
+            totalCount === 0
+              ? ""
+              : `Showing ${rangeStart}-${rangeEnd} of ${totalCount} · ${fmtAmount(totalAmount, "USD")} ${showPaid ? "paid" : "due"}`
+          }
         </span>
         <span id="invoice-bulk-toolbar" class="bulk-toolbar" hidden>
           <span id="invoice-bulk-count" class="section-help" style="margin:0;"></span>
