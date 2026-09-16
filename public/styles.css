@@ -895,7 +895,6 @@ button[type="submit"].link-button.danger:hover {
 .priority-row {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 20px;
   padding: 16px 0;
   border-top: 1px solid var(--border);
@@ -1022,6 +1021,15 @@ button[type="submit"].link-button.danger:hover {
   gap: 14px;
   flex-shrink: 0;
   padding-top: 2px;
+  /* Was relying on .priority-row's justify-content: space-between to push this to the
+     far right, back when the row only had two children (main content + actions). Adding
+     the bulk-select checkbox as a third (leading) child broke that: space-between
+     distributed the gap across all three, shoving the actual row content (vendor name,
+     subject, etc.) well to the right of everything above the list (page title, filters,
+     "Showing X of Y") instead of leaving it flush with them. margin-left: auto here
+     reproduces the "push to the far right" behavior regardless of how many children
+     come before it, so the content column stays flush-left like everything else. */
+  margin-left: auto;
 }
 
 .priority-actions a {
