@@ -364,7 +364,7 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
         </div>
       </div>
     </aside>
-    <main class="main">
+    <main class="main ${activePage === "home" ? "main-wide" : ""}">
       ${body}
     </main>
   </div>
@@ -698,6 +698,14 @@ app.get("/", async (req, res) => {
   const { rows: [priorityCount] } = await pool.query(
     `SELECT COUNT(*)::int AS count FROM processed_messages WHERE label = 'urgent' AND done = false`
   );
+  const { rows: topPriorityRows } = await pool.query(
+    `SELECT pm.subject, pm.from_address, pm.snippet, pm.pinned, a.email AS account_email
+     FROM processed_messages pm
+     JOIN accounts a ON a.id = pm.account_id
+     WHERE pm.label = 'urgent' AND pm.done = false
+     ORDER BY pm.pinned DESC, pm.processed_at DESC
+     LIMIT 4`
+  );
   const { rows: [invoiceSummary] } = await pool.query(
     `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount), 0)::float AS total
      FROM invoices WHERE paid = false`
@@ -796,16 +804,31 @@ app.get("/", async (req, res) => {
 
     <div class="bento">
     <div class="bento-tiles">
-      <a class="tile tile-stat" href="/priorities">
-        <div class="tile-eyebrow">Top priorities</div>
-        <div class="stat-row">
-          <div>
-            <span class="stat-value">${priorityCount.count}</span><span class="stat-unit">urgent</span>
-            <div class="stat-sub">${priorityCount.count ? "Needs a reply" : "Nothing waiting on you"}</div>
-          </div>
-          <div class="stat-icon">🗂️</div>
+      <section class="tile tile-priorities">
+        <div class="tile-head">
+          <h2>Top priorities</h2>
+          ${priorityCount.count ? `<a href="/priorities">View all ${priorityCount.count} →</a>` : ""}
         </div>
-      </a>
+        <div class="pq-list">
+          ${
+            topPriorityRows.length
+              ? topPriorityRows
+                  .map(
+                    (p) => `
+              <div class="pq-row">
+                <div class="pq-dot"></div>
+                <div class="pq-body">
+                  <div class="pq-subject">${escapeHtml(p.subject) || "(no subject)"}${p.pinned ? `<span class="pq-pin">Pinned</span>` : ""}</div>
+                  <div class="pq-meta">${escapeHtml(p.from_address)} · ${escapeHtml(p.account_email)}</div>
+                  ${p.snippet ? `<div class="pq-snippet">${escapeHtml(p.snippet)}</div>` : ""}
+                </div>
+              </div>`
+                  )
+                  .join("")
+              : `<div class="empty-state" style="padding:12px 0;">Nothing urgent waiting on you right now.</div>`
+          }
+        </div>
+      </section>
 
       <a class="tile tile-stat" href="/invoices">
         <div class="tile-eyebrow">Invoices</div>
