@@ -347,6 +347,27 @@ export async function getBusyEvents(account, timeMin, timeMax) {
   return busy.map((b) => ({ start: b.start, end: b.end }));
 }
 
+// Returns actual calendar events (not just busy/free) in the window, for Chat's "Also
+// check my calendar" grounding — getBusyEvents above only tells you when, not what.
+export async function listCalendarEvents(account, timeMin, timeMax) {
+  const calendar = calendarClientFor(account);
+  const { data } = await calendar.events.list({
+    calendarId: "primary",
+    timeMin,
+    timeMax,
+    maxResults: 20,
+    singleEvents: true,
+    orderBy: "startTime",
+  });
+  return (data.items ?? []).map((e) => ({
+    title: e.summary || "(no title)",
+    start: e.start?.dateTime || e.start?.date,
+    end: e.end?.dateTime || e.end?.date,
+    location: e.location || "",
+    attendees: (e.attendees ?? []).map((a) => a.displayName || a.email).filter(Boolean),
+  }));
+}
+
 // ---------- Appointment auto-detection: creating/removing calendar events ----------
 
 export async function createCalendarEvent(account, { title, startIso, endIso, location, description }) {

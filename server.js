@@ -30,6 +30,7 @@ import {
   deleteMemory,
   getRelevantMemoriesContext,
 } from "./src/chatMemory.js";
+import { getCalendarContext } from "./src/calendarContext.js";
 import { listCustomFiles, getCustomFilesContext } from "./src/customFiles.js";
 import {
   classifyChatIntent,
@@ -3049,6 +3050,7 @@ app.post("/chat", async (req, res) => {
   const message = (req.body.message ?? "").trim();
   const override = req.body.intent_override || "auto";
   const useWebSearch = !!req.body.use_web_search;
+  const useCalendar = !!req.body.use_calendar;
 
   let result = null;
 
@@ -3064,7 +3066,8 @@ app.post("/chat", async (req, res) => {
         result = await resolveChatIntent({ ...selection, message, history, override });
         if (result.type === "search") {
           const memoriesContext = await getRelevantMemoriesContext(selection.account?.email, message);
-          const answer = await answerFromSearch({ question: message, results: result.sources, history, useWebSearch, memoriesContext });
+          const calendarContext = useCalendar ? await getCalendarContext(selection) : "";
+          const answer = await answerFromSearch({ question: message, results: result.sources, history, useWebSearch, memoriesContext, calendarContext });
           result = { type: "search", answer, sources: result.sources };
           await saveChatMessage(selection.account?.email, "user", message);
           await saveChatMessage(selection.account?.email, "assistant", answer, result.sources);
@@ -3109,6 +3112,7 @@ app.post("/chat/ask", express.json(), async (req, res) => {
   const message = (req.body?.message ?? "").trim();
   const override = req.body?.intent_override || "auto";
   const useWebSearch = !!req.body?.use_web_search;
+  const useCalendar = !!req.body?.use_calendar;
 
   if (!accountId || !message) {
     return res.status(400).json({ error: "Pick an account and enter a question or request." });
@@ -3138,11 +3142,12 @@ app.post("/chat/ask", express.json(), async (req, res) => {
     }
 
     const memoriesContext = await getRelevantMemoriesContext(selection.account?.email, message);
+    const calendarContext = useCalendar ? await getCalendarContext(selection) : "";
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("X-Chat-Sources", encodeURIComponent(JSON.stringify(resolved.sources)));
     res.flushHeaders();
     let full = "";
-    for await (const chunk of answerFromSearchStream({ question: message, results: resolved.sources, history, useWebSearch, memoriesContext })) {
+    for await (const chunk of answerFromSearchStream({ question: message, results: resolved.sources, history, useWebSearch, memoriesContext, calendarContext })) {
       full += chunk;
       res.write(chunk);
     }
@@ -3302,6 +3307,10 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
         </div>
         <p class="section-help" id="chat-mic-status" hidden><span class="record-dot"></span> Listening…</p>
         <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--ink-soft); margin-top:8px;">
+          <input type="checkbox" name="use_calendar" id="chat-calendar" value="1" />
+          Also check my calendar (next 14 days — for scheduling/availability questions)
+        </label>
+        <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--ink-soft); margin-top:6px;">
           <input type="checkbox" name="use_web_search" id="chat-web-search" value="1" />
           Also search the web (for questions inbox context alone can't answer — adds latency)
         </label>
@@ -3589,6 +3598,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
           var message = document.getElementById("chat-message").value.trim();
           var intentOverride = document.getElementById("chat-intent").value;
           var useWebSearch = document.getElementById("chat-web-search").checked;
+          var useCalendar = document.getElementById("chat-calendar").checked;
           if (!accountId || !message) {
             resultEl.innerHTML =
               '<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">Pick an account and enter a question or request.</div>';
@@ -3603,7 +3613,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
           fetch("/chat/ask", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ account_id: accountId, message: message, intent_override: intentOverride, use_web_search: useWebSearch }),
+            body: JSON.stringify({ account_id: accountId, message: message, intent_override: intentOverride, use_web_search: useWebSearch, use_calendar: useCalendar }),
           })
             .then(function (res) {
               var ctype = res.headers.get("Content-Type") || "";

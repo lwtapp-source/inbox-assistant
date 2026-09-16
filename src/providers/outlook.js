@@ -357,6 +357,28 @@ export async function getBusyEvents(account, timeMin, timeMax) {
     .map((e) => ({ start: e.start?.dateTime + "Z", end: e.end?.dateTime + "Z" }));
 }
 
+// Returns actual calendar events (not just busy/free) in the window, for Chat's "Also
+// check my calendar" grounding — getBusyEvents above only tells you when, not what.
+export async function listCalendarEvents(account, timeMin, timeMax) {
+  const params = new URLSearchParams({
+    startDateTime: timeMin,
+    endDateTime: timeMax,
+    $select: "subject,start,end,location,attendees",
+    $top: "20",
+    $orderby: "start/dateTime",
+  });
+  const data = await graphFetch(account, `/me/calendarView?${params}`, {
+    headers: { Prefer: 'outlook.timezone="UTC"' },
+  });
+  return (data.value ?? []).map((e) => ({
+    title: e.subject || "(no title)",
+    start: e.start?.dateTime + "Z",
+    end: e.end?.dateTime + "Z",
+    location: e.location?.displayName || "",
+    attendees: (e.attendees ?? []).map((a) => a.emailAddress?.name || a.emailAddress?.address).filter(Boolean),
+  }));
+}
+
 // ---------- Appointment auto-detection: creating/removing calendar events ----------
 
 export async function createCalendarEvent(account, { title, startIso, endIso, location, description }) {

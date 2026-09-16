@@ -246,7 +246,14 @@ function extractAnswerText(content) {
 // back?") can resolve pronouns/references against the actual conversation. `useWebSearch`
 // lets Claude supplement the inbox results with a live web search when the question needs
 // outside context (e.g. "what's the return policy" from a vendor's site, not just the email).
-export async function answerFromSearch({ question, results, history = [], useWebSearch = false, memoriesContext = "" }) {
+export async function answerFromSearch({
+  question,
+  results,
+  history = [],
+  useWebSearch = false,
+  memoriesContext = "",
+  calendarContext = "",
+}) {
   const context = results.length
     ? results
         .map(
@@ -268,10 +275,12 @@ export async function answerFromSearch({ question, results, history = [], useWeb
       ...history.map((h) => ({ role: h.role === "assistant" ? "assistant" : "user", content: h.content })),
       {
         role: "user",
-        content: `Answer this question using the email search results below. Cite which
-email(s) you're drawing from by their [number]. If the results don't answer the question,
-say so plainly rather than guessing.${webNote}
-${memoriesContext}
+        content: `Answer this question using the email search results and (if given) the
+calendar below. Draw on whichever actually answers the question — combine them when the
+question needs both (e.g. "when am I free to meet with X" needs the calendar plus any
+email thread about scheduling). Cite which email(s) you're drawing from by their [number].
+If nothing here answers the question, say so plainly rather than guessing.${webNote}
+${memoriesContext}${calendarContext}
 QUESTION: ${question}
 
 SEARCH RESULTS:
@@ -288,7 +297,14 @@ ${context}`,
 // tool call happens mid-stream, only its resulting text blocks emit text_delta events
 // (the search itself doesn't stream tokens), so this naturally still yields just the
 // visible answer text with no extra handling.
-export async function* answerFromSearchStream({ question, results, history = [], useWebSearch = false, memoriesContext = "" }) {
+export async function* answerFromSearchStream({
+  question,
+  results,
+  history = [],
+  useWebSearch = false,
+  memoriesContext = "",
+  calendarContext = "",
+}) {
   const context = results.length
     ? results
         .map(
@@ -310,10 +326,12 @@ export async function* answerFromSearchStream({ question, results, history = [],
       ...history.map((h) => ({ role: h.role === "assistant" ? "assistant" : "user", content: h.content })),
       {
         role: "user",
-        content: `Answer this question using the email search results below. Cite which
-email(s) you're drawing from by their [number]. If the results don't answer the question,
-say so plainly rather than guessing.${webNote}
-${memoriesContext}
+        content: `Answer this question using the email search results and (if given) the
+calendar below. Draw on whichever actually answers the question — combine them when the
+question needs both (e.g. "when am I free to meet with X" needs the calendar plus any
+email thread about scheduling). Cite which email(s) you're drawing from by their [number].
+If nothing here answers the question, say so plainly rather than guessing.${webNote}
+${memoriesContext}${calendarContext}
 QUESTION: ${question}
 
 SEARCH RESULTS:
