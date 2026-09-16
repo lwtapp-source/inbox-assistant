@@ -623,6 +623,44 @@ code {
   font-size: 13px;
 }
 
+/* ---------- Home page ambient bar (time / date / weather) ---------- */
+
+.ambient-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  margin: -8px 0 24px;
+  flex-wrap: wrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.ambient-dot {
+  color: var(--ink-faint);
+}
+
+.ambient-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent-dark);
+  font: inherit;
+  font-variant-numeric: normal;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.ambient-city-input {
+  font: inherit;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  width: 140px;
+}
+
 /* ---------- Dashboard bento ---------- */
 /* Home page overview: Top Priorities is the anchor tile (largest, since it's what's
    actually opened and acted on daily, with a "View all N" link out to the full list at

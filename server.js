@@ -802,6 +802,16 @@ app.get("/", async (req, res) => {
     <h1>Home</h1>
     <p class="subtitle">At a glance across every connected inbox.</p>
 
+    <div class="ambient-bar" id="ambient-bar">
+      <span id="ambient-time">--:--</span>
+      <span class="ambient-dot">·</span>
+      <span id="ambient-date"></span>
+      <span class="ambient-dot">·</span>
+      <span id="ambient-weather">
+        <button type="button" id="ambient-weather-enable" class="ambient-link">Add weather</button>
+      </span>
+    </div>
+
     <div class="bento">
     <div class="bento-tiles">
       <section class="tile tile-priorities">
@@ -926,6 +936,140 @@ app.get("/", async (req, res) => {
 
         syncHeight();
         window.addEventListener("resize", syncHeight);
+      })();
+
+      (function () {
+        // Live clock: the viewer's own local time/date, not any account's stored
+        // timezone -- this is "what time is it right now for whoever's looking at the
+        // screen," which the browser already knows without asking.
+        var timeEl = document.getElementById("ambient-time");
+        var dateEl = document.getElementById("ambient-date");
+        function updateClock() {
+          var now = new Date();
+          if (timeEl) timeEl.textContent = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+          if (dateEl) dateEl.textContent = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+        }
+        updateClock();
+        setInterval(updateClock, 1000);
+
+        // Weather: opt-in, asked for once and remembered in this browser only (never
+        // sent to the server -- Sift has no server-side notion of "where you are").
+        // Prefers the browser's geolocation prompt; falls back to a plain city search
+        // via Open-Meteo's free geocoding API if geolocation is denied or unavailable.
+        // Open-Meteo needs no API key and allows browser-direct requests.
+        var weatherEl = document.getElementById("ambient-weather");
+        if (!weatherEl) return;
+
+        var WEATHER_CODES = {
+          0: ["Clear", "☀️"], 1: ["Mostly clear", "🌤️"], 2: ["Partly cloudy", "⛅"], 3: ["Cloudy", "☁️"],
+          45: ["Foggy", "🌫️"], 48: ["Foggy", "🌫️"],
+          51: ["Drizzle", "🌦️"], 53: ["Drizzle", "🌦️"], 55: ["Drizzle", "🌦️"],
+          61: ["Rain", "🌧️"], 63: ["Rain", "🌧️"], 65: ["Heavy rain", "🌧️"],
+          71: ["Snow", "❄️"], 73: ["Snow", "❄️"], 75: ["Heavy snow", "❄️"],
+          80: ["Showers", "🌦️"], 81: ["Showers", "🌦️"], 82: ["Heavy showers", "🌦️"],
+          95: ["Thunderstorms", "⛈️"], 96: ["Thunderstorms", "⛈️"], 99: ["Thunderstorms", "⛈️"],
+        };
+
+        function saveLocation(loc) {
+          try { localStorage.setItem("sift-weather-loc", JSON.stringify(loc)); } catch (e) {}
+        }
+
+        function fetchWeather(loc) {
+          weatherEl.textContent = "Loading weather…";
+          fetch(
+            "https://api.open-meteo.com/v1/forecast?latitude=" + loc.lat + "&longitude=" + loc.lon +
+              "&current=temperature_2m,weather_code&temperature_unit=fahrenheit"
+          )
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+              if (!data.current) throw new Error("no data");
+              var info = WEATHER_CODES[data.current.weather_code] || ["", ""];
+              var place = loc.label ? " · " + loc.label : "";
+              weatherEl.innerHTML =
+                info[1] + " " + Math.round(data.current.temperature_2m) + "°F " + info[0] + place +
+                ' <button type="button" id="ambient-weather-change" class="ambient-link">change</button>';
+              var changeBtn = document.getElementById("ambient-weather-change");
+              if (changeBtn) {
+                changeBtn.addEventListener("click", function () {
+                  try { localStorage.removeItem("sift-weather-loc"); } catch (e) {}
+                  promptManualLocation();
+                });
+              }
+            })
+            .catch(function () {
+              weatherEl.textContent = "Weather unavailable";
+            });
+        }
+
+        function promptManualLocation() {
+          weatherEl.innerHTML =
+            '<input type="text" id="ambient-city-input" class="ambient-city-input" placeholder="City, State" />' +
+            ' <button type="button" id="ambient-city-go" class="ambient-link">Go</button>';
+          var input = document.getElementById("ambient-city-input");
+          var go = document.getElementById("ambient-city-go");
+          input.focus();
+          function submitCity() {
+            var city = input.value.trim();
+            if (!city) return;
+            weatherEl.textContent = "Looking up " + city + "…";
+            fetch("https://geocoding-api.open-meteo.com/v1/search?count=1&name=" + encodeURIComponent(city))
+              .then(function (res) { return res.json(); })
+              .then(function (data) {
+                var result = data.results && data.results[0];
+                if (!result) {
+                  weatherEl.innerHTML = 'Couldn\\'t find that place. <button type="button" id="ambient-city-retry" class="ambient-link">Try again</button>';
+                  var retry = document.getElementById("ambient-city-retry");
+                  if (retry) retry.addEventListener("click", promptManualLocation);
+                  return;
+                }
+                var loc = {
+                  lat: result.latitude,
+                  lon: result.longitude,
+                  label: result.name + (result.admin1 ? ", " + result.admin1 : ""),
+                };
+                saveLocation(loc);
+                fetchWeather(loc);
+              })
+              .catch(function () {
+                weatherEl.textContent = "Couldn't look that up right now.";
+              });
+          }
+          go.addEventListener("click", submitCity);
+          input.addEventListener("keydown", function (e) {
+            if (e.key === "Enter") submitCity();
+          });
+        }
+
+        function requestLocation() {
+          weatherEl.textContent = "Locating…";
+          if (!navigator.geolocation) {
+            promptManualLocation();
+            return;
+          }
+          navigator.geolocation.getCurrentPosition(
+            function (pos) {
+              var loc = { lat: pos.coords.latitude, lon: pos.coords.longitude, label: "" };
+              saveLocation(loc);
+              fetchWeather(loc);
+            },
+            function () {
+              promptManualLocation();
+            },
+            { timeout: 8000 }
+          );
+        }
+
+        var savedLocation = null;
+        try {
+          savedLocation = JSON.parse(localStorage.getItem("sift-weather-loc"));
+        } catch (e) {}
+
+        if (savedLocation && typeof savedLocation.lat === "number") {
+          fetchWeather(savedLocation);
+        } else {
+          var enableBtn = document.getElementById("ambient-weather-enable");
+          if (enableBtn) enableBtn.addEventListener("click", requestLocation);
+        }
       })();
     </script>`;
 
