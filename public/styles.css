@@ -1164,6 +1164,42 @@ input[type="file"] {
   }
 }
 
+/* ---------- Chat voice input ---------- */
+
+.chat-input-wrap {
+  position: relative;
+}
+
+.chat-input-wrap textarea {
+  padding-right: 46px;
+}
+
+.mic-button {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 15px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mic-button:hover {
+  background: var(--accent-wash);
+}
+
+.mic-button.recording {
+  background: var(--error-bg);
+  border-color: var(--urgent);
+}
+
 /* ---------- Chat conversation thread ---------- */
 
 .chat-turn {

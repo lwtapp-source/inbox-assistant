@@ -3227,7 +3227,11 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
           Examples: "Find the email thread about the marketing proposal" or "Draft an email
           to sarah@example.com about rescheduling Thursday's appointment."
         </p>
-        <textarea name="message" id="chat-message" rows="4">${escapeHtml(message) ?? ""}</textarea>
+        <div class="chat-input-wrap">
+          <textarea name="message" id="chat-message" rows="4">${escapeHtml(message) ?? ""}</textarea>
+          <button type="button" id="chat-mic" class="mic-button" title="Voice input" aria-label="Start voice input" hidden>🎤</button>
+        </div>
+        <p class="section-help" id="chat-mic-status" hidden><span class="record-dot"></span> Listening…</p>
       </div>
       <button type="submit" id="chat-submit">Ask</button>
     </form>
@@ -3269,6 +3273,96 @@ function renderChatPage({ accounts, selectedAccountId, message, result, history,
         if (!form || !window.fetch || !window.ReadableStream) return; // no-JS/old-browser fallback: plain form POST to /chat
 
         var resultEl = document.getElementById("chat-result");
+
+        // Voice input: browser-native Web Speech API, no server round-trip. Only Chrome/
+        // Edge/Safari implement it (as the vendor-prefixed webkitSpeechRecognition), so the
+        // mic button stays hidden everywhere else instead of showing a control that'd fail.
+        (function setupVoiceInput() {
+          var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+          var micBtn = document.getElementById("chat-mic");
+          var micStatus = document.getElementById("chat-mic-status");
+          var messageEl = document.getElementById("chat-message");
+          if (!SpeechRecognition || !micBtn) return;
+
+          micBtn.hidden = false;
+
+          var recognition = new SpeechRecognition();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = "en-US";
+
+          var listening = false;
+          var baseValue = "";
+
+          recognition.onresult = function (event) {
+            var finalText = "";
+            var interimText = "";
+            for (var i = event.resultIndex; i < event.results.length; i++) {
+              var transcript = event.results[i][0].transcript;
+              if (event.results[i].isFinal) {
+                finalText += transcript;
+              } else {
+                interimText += transcript;
+              }
+            }
+            if (finalText) {
+              baseValue = (baseValue ? baseValue + " " : "") + finalText.trim();
+            }
+            messageEl.value = (baseValue + " " + interimText).trim();
+          };
+
+          recognition.onerror = function (event) {
+            stopListening();
+            if (event.error !== "no-speech" && event.error !== "aborted") {
+              micStatus.hidden = false;
+              micStatus.textContent = "Voice input error: " + event.error;
+            }
+          };
+
+          recognition.onend = function () {
+            if (listening) {
+              // Chrome auto-stops after a period of silence — restart transparently
+              // while the user still has the mic toggled on.
+              try {
+                recognition.start();
+              } catch (err) {
+                stopListening();
+              }
+            }
+          };
+
+          function startListening() {
+            baseValue = messageEl.value.trim();
+            listening = true;
+            micBtn.classList.add("recording");
+            micBtn.setAttribute("aria-label", "Stop voice input");
+            micStatus.hidden = false;
+            micStatus.innerHTML = '<span class="record-dot"></span> Listening…';
+            try {
+              recognition.start();
+            } catch (err) {
+              stopListening();
+            }
+          }
+
+          function stopListening() {
+            listening = false;
+            micBtn.classList.remove("recording");
+            micBtn.setAttribute("aria-label", "Start voice input");
+            micStatus.hidden = true;
+            try {
+              recognition.stop();
+            } catch (err) {}
+          }
+
+          micBtn.addEventListener("click", function () {
+            if (listening) {
+              stopListening();
+            } else {
+              startListening();
+            }
+          });
+        })();
 
         function escapeForHtml(s) {
           var div = document.createElement("div");
