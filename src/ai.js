@@ -165,7 +165,14 @@ Write only the reply body text, no subject line, no commentary.`,
 // ---------- Chat: search / draft-from-scratch ----------
 
 // Classifies a Chat message as either a search/question or a request to draft a new email.
-export async function classifyChatIntent(message) {
+// `history` (recent {role, content} turns) helps classify follow-ups like "send that as an
+// email" that only make sense in light of what was just discussed.
+export async function classifyChatIntent(message, history = []) {
+  const historyText = history.length
+    ? `\n\nRecent conversation, for context only:\n${history
+        .map((h) => `${h.role}: ${h.content}`)
+        .join("\n")}`
+    : "";
   const msg = await anthropic.messages.create({
     model: FAST_MODEL,
     max_tokens: 10,
@@ -176,7 +183,7 @@ export async function classifyChatIntent(message) {
 through the inbox) or "draft" (a request to write a new email from scratch).
 Reply with only the one word.
 
-Request: ${message}`,
+Request: ${message}${historyText}`,
       },
     ],
   });
@@ -209,8 +216,10 @@ Request: ${message}`,
   }
 }
 
-// Answers a Chat search question using retrieved email results.
-export async function answerFromSearch({ question, results }) {
+// Answers a Chat search question using retrieved email results. `history` (recent
+// {role, content} turns) is passed as real prior turns so follow-ups ("what did she say
+// back?") can resolve pronouns/references against the actual conversation.
+export async function answerFromSearch({ question, results, history = [] }) {
   const context = results.length
     ? results
         .map(
@@ -224,6 +233,7 @@ export async function answerFromSearch({ question, results }) {
     model: MODEL,
     max_tokens: 500,
     messages: [
+      ...history.map((h) => ({ role: h.role === "assistant" ? "assistant" : "user", content: h.content })),
       {
         role: "user",
         content: `Answer this question using the email search results below. Cite which
@@ -243,7 +253,7 @@ ${context}`,
 // Same prompt as answerFromSearch, but yields the answer as it's generated instead of
 // waiting for the full response — used by the Chat page's streaming JS fetch, so the
 // answer appears token-by-token rather than as a single delayed block.
-export async function* answerFromSearchStream({ question, results }) {
+export async function* answerFromSearchStream({ question, results, history = [] }) {
   const context = results.length
     ? results
         .map(
@@ -257,6 +267,7 @@ export async function* answerFromSearchStream({ question, results }) {
     model: MODEL,
     max_tokens: 500,
     messages: [
+      ...history.map((h) => ({ role: h.role === "assistant" ? "assistant" : "user", content: h.content })),
       {
         role: "user",
         content: `Answer this question using the email search results below. Cite which

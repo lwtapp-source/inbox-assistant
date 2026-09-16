@@ -637,6 +637,24 @@ async function getAccounts() {
   return rows;
 }
 
+// Chat conversation memory: a single continuous thread (this app has one user), so
+// switching which inbox is selected doesn't lose context on follow-up questions.
+async function getChatHistory(limit = 20) {
+  const { rows } = await pool.query(
+    `SELECT id, account_email, role, content, sources, created_at
+     FROM chat_messages ORDER BY id DESC LIMIT $1`,
+    [limit]
+  );
+  return rows.reverse();
+}
+
+async function saveChatMessage(accountEmail, role, content, sources) {
+  await pool.query(
+    `INSERT INTO chat_messages (account_email, role, content, sources) VALUES ($1, $2, $3, $4)`,
+    [accountEmail || null, role, content, sources ? JSON.stringify(sources) : null]
+  );
+}
+
 async function getDisconnectedAccounts() {
   const { rows } = await pool.query(
     `SELECT id, email, provider FROM accounts WHERE active = false ORDER BY created_at`
@@ -2852,13 +2870,20 @@ app.post("/invoices/:id/edit", async (req, res) => {
 
 app.get("/chat", async (req, res) => {
   const accounts = await getAccounts();
+  const history = await getChatHistory();
   const body = renderChatPage({
     accounts,
     selectedAccountId: null,
+    history,
     result: null,
     indexing: !!req.query.indexing,
   });
   res.send(await renderLayout({ title: "Chat", activeAccountId: null, accounts, body, activePage: "chat" }));
+});
+
+app.post("/chat/clear", async (req, res) => {
+  await pool.query(`DELETE FROM chat_messages`);
+  res.redirect("/chat");
 });
 
 app.post("/chat/build-index", async (req, res) => {
@@ -2880,10 +2905,31 @@ app.post("/chat/build-index", async (req, res) => {
 // before the answer itself starts arriving. Returns either a finished result ({type:
 // "draft_created" | "draft_needs_clarification"}), or {type: "search", question, sources}
 // for the caller to answer (streamed or not).
-async function resolveChatIntent(account, provider, message) {
-  const intent = await classifyChatIntent(message);
+//
+// `account` is null when the user picked "All accounts" — in that case `allAccounts` (every
+// connected account) is searched and results are merged/tagged by which inbox they came
+// from. Drafting still needs one specific mailbox to create the draft in, so a draft intent
+// with no account picked comes back as a clarification asking the user to choose one.
+// `override` forces the intent instead of classifying ("search" | "draft" | "auto").
+async function resolveChatIntent({ account, provider, allAccounts, message, history, override }) {
+  const intent = override && override !== "auto" ? override : await classifyChatIntent(message, history);
 
   if (intent === "search") {
+    if (!account) {
+      const perAccountLimit = Math.max(3, Math.ceil(8 / Math.max(allAccounts.length, 1)));
+      const lists = await Promise.all(
+        allAccounts.map(async (acc) => {
+          const p = chatProviders[acc.provider];
+          let results = await searchSimilar(acc.id, message, perAccountLimit);
+          if (!results) {
+            results = p?.searchMessages ? await p.searchMessages(acc, message, perAccountLimit) : [];
+          }
+          return (results || []).map((r) => ({ ...r, account: acc.email }));
+        })
+      );
+      return { type: "search", question: message, sources: lists.flat().slice(0, 8) };
+    }
+
     let searchResults = await searchSimilar(account.id, message, 8);
     if (!searchResults) {
       // No embeddings indexed yet (or semantic search isn't configured) — fall
@@ -2893,6 +2939,10 @@ async function resolveChatIntent(account, provider, message) {
         : [];
     }
     return { type: "search", question: message, sources: searchResults };
+  }
+
+  if (!account) {
+    return { type: "draft_needs_clarification", accountRequired: true };
   }
 
   const extracted = await extractDraftRequest(message);
@@ -2935,36 +2985,68 @@ async function resolveChatIntent(account, provider, message) {
   };
 }
 
+// Resolves the account_id field from a chat request into either a single {account,
+// provider} pair or, for "all", the full list of connected accounts to search across.
+// Returns null (with an error result already usable) when nothing valid was picked.
+async function resolveChatAccountSelection(accountId) {
+  if (accountId === "all") {
+    const allAccounts = await getAccounts();
+    return allAccounts.length
+      ? { account: null, provider: null, allAccounts }
+      : { error: "Connect an account first." };
+  }
+  const { rows } = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [accountId]);
+  const account = rows[0];
+  if (!account) return { error: "Pick an account and enter a question or request." };
+  return { account, provider: chatProviders[account.provider], allAccounts: null };
+}
+
 app.post("/chat", async (req, res) => {
   const accounts = await getAccounts();
   const accountId = req.body.account_id;
   const message = (req.body.message ?? "").trim();
-
-  const { rows } = await pool.query(
-    `SELECT * FROM accounts WHERE id = $1`,
-    [accountId]
-  );
-  const account = rows[0];
-  const provider = account ? chatProviders[account.provider] : null;
+  const override = req.body.intent_override || "auto";
 
   let result = null;
 
-  if (!account || !provider || !message) {
+  if (!accountId || !message) {
     result = { error: "Pick an account and enter a question or request." };
   } else {
-    try {
-      result = await resolveChatIntent(account, provider, message);
-      if (result.type === "search") {
-        const answer = await answerFromSearch({ question: message, results: result.sources });
-        result = { type: "search", answer, sources: result.sources };
+    const selection = await resolveChatAccountSelection(accountId);
+    if (selection.error) {
+      result = { error: selection.error };
+    } else {
+      try {
+        const history = await getChatHistory(6);
+        result = await resolveChatIntent({ ...selection, message, history, override });
+        if (result.type === "search") {
+          const answer = await answerFromSearch({ question: message, results: result.sources, history });
+          result = { type: "search", answer, sources: result.sources };
+          await saveChatMessage(selection.account?.email, "user", message);
+          await saveChatMessage(selection.account?.email, "assistant", answer, result.sources);
+        } else if (result.type === "draft_created") {
+          await saveChatMessage(selection.account?.email, "user", message);
+          await saveChatMessage(
+            selection.account?.email,
+            "assistant",
+            `Drafted an email to ${result.to} (subject: ${result.subject}):\n\n${result.body}`
+          );
+        }
+      } catch (err) {
+        console.error("Chat request failed:", err);
+        result = { error: "Something went wrong: " + err.message };
       }
-    } catch (err) {
-      console.error("Chat request failed:", err);
-      result = { error: "Something went wrong: " + err.message };
     }
   }
 
-  const body = renderChatPage({ accounts, selectedAccountId: accountId, message, result });
+  // Successful search/draft turns are already persisted, so they'll show up via `history`
+  // below — render them there instead of a second time via `result`, and clear the
+  // textarea since the request's been answered.
+  const displayMessage = result?.type === "search" || result?.type === "draft_created" ? "" : message;
+  const displayResult = result?.type === "search" || result?.type === "draft_created" ? null : result;
+
+  const history = await getChatHistory();
+  const body = renderChatPage({ accounts, selectedAccountId: accountId, message: displayMessage, result: displayResult, history });
   res.send(await renderLayout({ title: "Chat", activeAccountId: null, accounts, body, activePage: "chat" }));
 });
 
@@ -2976,28 +3058,43 @@ app.post("/chat", async (req, res) => {
 app.post("/chat/ask", express.json(), async (req, res) => {
   const accountId = req.body?.account_id;
   const message = (req.body?.message ?? "").trim();
+  const override = req.body?.intent_override || "auto";
 
-  const { rows } = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [accountId]);
-  const account = rows[0];
-  const provider = account ? chatProviders[account.provider] : null;
-
-  if (!account || !provider || !message) {
+  if (!accountId || !message) {
     return res.status(400).json({ error: "Pick an account and enter a question or request." });
   }
 
+  const selection = await resolveChatAccountSelection(accountId);
+  if (selection.error) {
+    return res.status(400).json({ error: selection.error });
+  }
+
   try {
-    const resolved = await resolveChatIntent(account, provider, message);
+    const history = await getChatHistory(6);
+    const resolved = await resolveChatIntent({ ...selection, message, history, override });
     if (resolved.type !== "search") {
+      if (resolved.type === "draft_created") {
+        await saveChatMessage(selection.account?.email, "user", message);
+        await saveChatMessage(
+          selection.account?.email,
+          "assistant",
+          `Drafted an email to ${resolved.to} (subject: ${resolved.subject}):\n\n${resolved.body}`
+        );
+      }
       return res.json(resolved);
     }
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("X-Chat-Sources", encodeURIComponent(JSON.stringify(resolved.sources)));
     res.flushHeaders();
-    for await (const chunk of answerFromSearchStream({ question: message, results: resolved.sources })) {
+    let full = "";
+    for await (const chunk of answerFromSearchStream({ question: message, results: resolved.sources, history })) {
+      full += chunk;
       res.write(chunk);
     }
     res.end();
+    await saveChatMessage(selection.account?.email, "user", message);
+    await saveChatMessage(selection.account?.email, "assistant", full, resolved.sources);
   } catch (err) {
     console.error("Chat request failed:", err);
     if (!res.headersSent) {
@@ -3008,50 +3105,71 @@ app.post("/chat/ask", express.json(), async (req, res) => {
   }
 });
 
-function renderChatPage({ accounts, selectedAccountId, message, result, indexing }) {
+function renderChatPage({ accounts, selectedAccountId, message, result, history, indexing }) {
   const accountOptions = accounts
     .map(
       (a) =>
         `<option value="${a.id}" ${String(a.id) === String(selectedAccountId) ? "selected" : ""}>${escapeHtml(a.email)}</option>`
     )
     .join("");
+  const allAccountsOption =
+    accounts.length > 1
+      ? `<option value="all" ${selectedAccountId === "all" ? "selected" : ""}>All accounts</option>`
+      : "";
 
-  let resultHtml = "";
-  if (result?.error) {
-    resultHtml = `<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">${result.error}</div>`;
-  } else if (result?.type === "search") {
-    const sourceRows = result.sources
+  function renderSources(sources) {
+    if (!sources?.length) return "";
+    const rows = sources
       .map(
         (s, i) => `
         <div class="file-row">
           <div>
-            <div class="file-name">[${i + 1}] ${escapeHtml(s.subject) || "(no subject)"}</div>
+            <div class="file-name">[${i + 1}] ${escapeHtml(s.subject) || "(no subject)"}${s.account ? ` <span class="section-help" style="display:inline;">· ${escapeHtml(s.account)}</span>` : ""}</div>
             <div class="file-meta">${escapeHtml(s.from)} · ${escapeHtml(s.date)}</div>
           </div>
           ${s.webLink ? `<a href="${s.webLink}" target="_blank" rel="noopener">Open</a>` : ""}
         </div>`
       )
       .join("");
-    resultHtml = `
-      <div class="section">
-        <h2>Answer</h2>
-        <p style="white-space:pre-wrap;">${escapeHtml(result.answer)}</p>
-        ${result.sources.length ? `<h2 style="margin-top:18px;">Sources</h2><div class="file-list">${sourceRows}</div>` : ""}
-      </div>`;
-  } else if (result?.type === "draft_needs_clarification") {
-    resultHtml = `
-      <div class="section">
+    return `<h2 style="margin-top:18px;">Sources</h2><div class="file-list">${rows}</div>`;
+  }
+
+  function draftClarificationHtml(r) {
+    if (r.accountRequired) {
+      return `
+        <div class="chat-turn chat-turn-assistant">
+          <h2>Pick a specific inbox</h2>
+          <p class="section-help">Drafting a new email needs one specific inbox to create the draft in — "All accounts" only works for search. Choose an inbox above and try again.</p>
+        </div>`;
+    }
+    return `
+      <div class="chat-turn chat-turn-assistant">
         <h2>Need a bit more detail</h2>
         <p class="section-help">
           I couldn't find a clear, unambiguous email address for
-          ${result.recipientName ? `"${escapeHtml(result.recipientName)}"` : "the recipient"}.
+          ${r.recipientName ? `"${escapeHtml(r.recipientName)}"` : "the recipient"}.
           Try again with their full email address included, e.g. "Draft an email to
           thomas@example.com about the property viewing on Monday."
         </p>
       </div>`;
+  }
+
+  let resultHtml = "";
+  if (result?.error) {
+    resultHtml = `<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">${result.error}</div>`;
+  } else if (result?.type === "search") {
+    resultHtml = `
+      <div class="chat-turn chat-turn-user"><p style="white-space:pre-wrap;">${escapeHtml(message)}</p></div>
+      <div class="chat-turn chat-turn-assistant">
+        <p style="white-space:pre-wrap;">${escapeHtml(result.answer)}</p>
+        ${renderSources(result.sources)}
+      </div>`;
+  } else if (result?.type === "draft_needs_clarification") {
+    resultHtml = draftClarificationHtml(result);
   } else if (result?.type === "draft_created") {
     resultHtml = `
-      <div class="section">
+      <div class="chat-turn chat-turn-user"><p style="white-space:pre-wrap;">${escapeHtml(message)}</p></div>
+      <div class="chat-turn chat-turn-assistant">
         <h2>Draft created</h2>
         <p class="section-help">To: ${escapeHtml(result.to)} · Subject: ${escapeHtml(result.subject)}</p>
         <p style="white-space:pre-wrap; border:1px solid var(--border); border-radius:var(--radius); padding:14px; background:var(--surface);">${escapeHtml(result.body)}</p>
@@ -3059,19 +3177,49 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
       </div>`;
   }
 
+  const historyHtml = (history || [])
+    .map((h) => {
+      let sources = null;
+      if (h.sources) {
+        try {
+          sources = typeof h.sources === "string" ? JSON.parse(h.sources) : h.sources;
+        } catch {
+          sources = null;
+        }
+      }
+      return `
+        <div class="chat-turn chat-turn-${h.role === "user" ? "user" : "assistant"}">
+          ${h.account_email ? `<p class="section-help" style="margin:0 0 6px;">${escapeHtml(h.account_email)}</p>` : ""}
+          <p style="white-space:pre-wrap;">${escapeHtml(h.content)}</p>
+          ${renderSources(sources)}
+        </div>`;
+    })
+    .join("");
+
   return `
     <h1>Chat</h1>
-    <p class="subtitle">Ask a question about an inbox, or ask for a new email to be drafted from scratch.</p>
+    <p class="subtitle">Ask a question about an inbox, or ask for a new email to be drafted from scratch. Recent turns are remembered, so follow-ups work.</p>
 
     ${indexing ? `<div class="saved-banner">Building the search index in the background — check back in a few minutes.</div><br/>` : ""}
 
     <form method="POST" action="/chat" id="chat-form">
-      <div class="section" style="padding-top:0; border-top:none;">
-        <h2>Which inbox?</h2>
-        <select name="account_id" id="chat-account" required style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
-          <option value="">Choose an account</option>
-          ${accountOptions}
-        </select>
+      <div class="section" style="padding-top:0; border-top:none; display:flex; gap:16px; flex-wrap:wrap;">
+        <div>
+          <h2>Which inbox?</h2>
+          <select name="account_id" id="chat-account" required style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
+            <option value="">Choose an account</option>
+            ${allAccountsOption}
+            ${accountOptions}
+          </select>
+        </div>
+        <div>
+          <h2>What kind of request?</h2>
+          <select name="intent_override" id="chat-intent" style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
+            <option value="auto">Auto-detect</option>
+            <option value="search">Find something</option>
+            <option value="draft">Draft an email</option>
+          </select>
+        </div>
       </div>
       <div class="section">
         <h2>Your request</h2>
@@ -3105,6 +3253,14 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
       </form>
     </div>
 
+    <div class="section" style="display:flex; justify-content:space-between; align-items:center;">
+      <h2 style="margin:0;">Conversation</h2>
+      <form method="POST" action="/chat/clear" onsubmit="return confirm('Clear the whole conversation history?');">
+        <button type="submit" class="link-button danger">Clear conversation</button>
+      </form>
+    </div>
+
+    <div id="chat-thread">${historyHtml}</div>
     <div id="chat-result">${resultHtml}</div>
 
     <script>
@@ -3120,23 +3276,57 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
           return div.innerHTML;
         }
 
-        function renderJsonResult(data, ok) {
+        function sourcesHtml(sources) {
+          if (!sources || !sources.length) return "";
+          return (
+            "<h2 style=\\"margin-top:18px;\\">Sources</h2><div class=\\"file-list\\">" +
+            sources
+              .map(function (s, i) {
+                return (
+                  '<div class="file-row"><div><div class="file-name">[' +
+                  (i + 1) +
+                  "] " +
+                  escapeForHtml(s.subject || "(no subject)") +
+                  (s.account ? ' <span class="section-help" style="display:inline;">· ' + escapeForHtml(s.account) + "</span>" : "") +
+                  '</div><div class="file-meta">' +
+                  escapeForHtml(s.from) +
+                  " · " +
+                  escapeForHtml(s.date) +
+                  "</div></div>" +
+                  (s.webLink ? '<a href="' + s.webLink + '" target="_blank" rel="noopener">Open</a>' : "") +
+                  "</div>"
+                );
+              })
+              .join("") +
+            "</div>"
+          );
+        }
+
+        function userTurn(message) {
+          return '<div class="chat-turn chat-turn-user"><p style="white-space:pre-wrap;">' + escapeForHtml(message) + "</p></div>";
+        }
+
+        function renderJsonResult(data, ok, message) {
           if (!ok || data.error) {
             resultEl.innerHTML =
               '<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">' +
               escapeForHtml(data.error || "Something went wrong.") +
               "</div>";
           } else if (data.type === "draft_needs_clarification") {
-            resultEl.innerHTML =
-              '<div class="section"><h2>Need a bit more detail</h2><p class="section-help">' +
-              "I couldn't find a clear, unambiguous email address for " +
-              (data.recipientName ? '"' + escapeForHtml(data.recipientName) + '"' : "the recipient") +
-              '. Try again with their full email address included, e.g. "Draft an email to ' +
-              'thomas@example.com about the property viewing on Monday."' +
-              "</p></div>";
+            resultEl.innerHTML = data.accountRequired
+              ? '<div class="chat-turn chat-turn-assistant"><h2>Pick a specific inbox</h2><p class="section-help">' +
+                'Drafting a new email needs one specific inbox to create the draft in — "All accounts" only works for search. ' +
+                "Choose an inbox above and try again.</p></div>"
+              : '<div class="chat-turn chat-turn-assistant"><h2>Need a bit more detail</h2><p class="section-help">' +
+                "I couldn't find a clear, unambiguous email address for " +
+                (data.recipientName ? '"' + escapeForHtml(data.recipientName) + '"' : "the recipient") +
+                '. Try again with their full email address included, e.g. "Draft an email to ' +
+                'thomas@example.com about the property viewing on Monday."' +
+                "</p></div>";
           } else if (data.type === "draft_created") {
             resultEl.innerHTML =
-              '<div class="section"><h2>Draft created</h2><p class="section-help">To: ' +
+              userTurn(message) +
+              '<div class="chat-turn chat-turn-assistant"><h2>Draft created</h2><p class="section-help">To: ' +
               escapeForHtml(data.to) +
               " · Subject: " +
               escapeForHtml(data.subject) +
@@ -3151,30 +3341,12 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
           }
         }
 
-        function streamAnswer(res, sources) {
-          var sourcesHtml = sources.length
-            ? "<h2 style=\\"margin-top:18px;\\">Sources</h2><div class=\\"file-list\\">" +
-              sources
-                .map(function (s, i) {
-                  return (
-                    '<div class="file-row"><div><div class="file-name">[' +
-                    (i + 1) +
-                    "] " +
-                    escapeForHtml(s.subject || "(no subject)") +
-                    '</div><div class="file-meta">' +
-                    escapeForHtml(s.from) +
-                    " · " +
-                    escapeForHtml(s.date) +
-                    "</div></div>" +
-                    (s.webLink ? '<a href="' + s.webLink + '" target="_blank" rel="noopener">Open</a>' : "") +
-                    "</div>"
-                  );
-                })
-                .join("") +
-              "</div>"
-            : "";
-
-          resultEl.innerHTML = '<div class="section"><h2>Answer</h2><p id="chat-answer-text" style="white-space:pre-wrap;"></p>' + sourcesHtml + "</div>";
+        function streamAnswer(res, sources, message) {
+          resultEl.innerHTML =
+            userTurn(message) +
+            '<div class="chat-turn chat-turn-assistant"><p id="chat-answer-text" style="white-space:pre-wrap;"></p>' +
+            sourcesHtml(sources) +
+            "</div>";
           var answerEl = document.getElementById("chat-answer-text");
 
           var reader = res.body.getReader();
@@ -3195,6 +3367,7 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
           e.preventDefault();
           var accountId = document.getElementById("chat-account").value;
           var message = document.getElementById("chat-message").value.trim();
+          var intentOverride = document.getElementById("chat-intent").value;
           if (!accountId || !message) {
             resultEl.innerHTML =
               '<div class="saved-banner" style="background:var(--error-bg); color:var(--error-ink);">Pick an account and enter a question or request.</div>';
@@ -3209,13 +3382,13 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
           fetch("/chat/ask", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ account_id: accountId, message: message }),
+            body: JSON.stringify({ account_id: accountId, message: message, intent_override: intentOverride }),
           })
             .then(function (res) {
               var ctype = res.headers.get("Content-Type") || "";
               if (ctype.indexOf("application/json") !== -1) {
                 return res.json().then(function (data) {
-                  renderJsonResult(data, res.ok);
+                  renderJsonResult(data, res.ok, message);
                 });
               }
               var sourcesHeader = res.headers.get("X-Chat-Sources");
@@ -3223,7 +3396,17 @@ function renderChatPage({ accounts, selectedAccountId, message, result, indexing
               try {
                 sources = sourcesHeader ? JSON.parse(decodeURIComponent(sourcesHeader)) : [];
               } catch (err) {}
-              return streamAnswer(res, sources);
+              return streamAnswer(res, sources, message);
+            })
+            .then(function () {
+              // Move the finished exchange into the persistent thread and clear the input
+              // for the next question, so the conversation keeps building downward.
+              var thread = document.getElementById("chat-thread");
+              if (thread && resultEl.innerHTML.indexOf("saved-banner") === -1) {
+                thread.innerHTML += resultEl.innerHTML;
+                resultEl.innerHTML = "";
+                document.getElementById("chat-message").value = "";
+              }
             })
             .catch(function (err) {
               resultEl.innerHTML =

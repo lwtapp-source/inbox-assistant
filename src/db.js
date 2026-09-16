@@ -177,6 +177,17 @@ export async function initSchema() {
       UNIQUE(account_id, message_id)
     );
 
+    -- account_email (not a FK) so conversation history survives an account being
+    -- disconnected later — this is chat memory, not per-account operational data.
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id SERIAL PRIMARY KEY,
+      account_email TEXT,                -- NULL means the "All accounts" scope
+      role TEXT NOT NULL,                -- 'user' | 'assistant'
+      content TEXT NOT NULL,
+      sources JSONB,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+
     CREATE TABLE IF NOT EXISTS batch_jobs (
       id SERIAL PRIMARY KEY,
       account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,

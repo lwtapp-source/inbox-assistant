@@ -1164,6 +1164,27 @@ input[type="file"] {
   }
 }
 
+/* ---------- Chat conversation thread ---------- */
+
+.chat-turn {
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+}
+
+.chat-turn-user {
+  background: var(--accent-wash);
+}
+
+.chat-turn-assistant {
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.chat-turn h2 {
+  margin-top: 0;
+}
+
 /* Printing a message (the "Print" button on the in-app viewer) should produce just the
    subject/meta/body, not the app chrome around it — and always on white/black regardless
    of the current theme, since dark-mode colors printed as-is would waste a page of ink
