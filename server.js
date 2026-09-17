@@ -2956,7 +2956,9 @@ app.get("/invoices", async (req, res) => {
       if (!groups.has(key)) groups.set(key, { vendor: key, rows: [], total: 0, currency: inv.currency || "USD" });
       const g = groups.get(key);
       g.rows.push(inv);
-      if (inv.amount !== null) g.total += inv.amount;
+      // pg returns NUMERIC columns as strings (to avoid float precision loss), so a
+      // plain += here would silently string-concatenate instead of adding.
+      if (inv.amount !== null) g.total += Number(inv.amount);
     }
     const list = Array.from(groups.values());
     list.sort((a, b) => {
