@@ -2794,6 +2794,16 @@ app.get("/invoices", async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const offset = (page - 1) * PAGE_SIZE;
 
+  const VALID_SORTS = ["due", "amount_desc", "amount_asc", "vendor", "newest"];
+  const defaultSort = showPaid ? "newest" : "due";
+  const sort = VALID_SORTS.includes(req.query.sort) ? req.query.sort : defaultSort;
+  const orderBy =
+    sort === "amount_desc" ? "inv.amount DESC NULLS LAST, inv.created_at DESC" :
+    sort === "amount_asc" ? "inv.amount ASC NULLS LAST, inv.created_at DESC" :
+    sort === "vendor" ? "inv.vendor ASC NULLS LAST, inv.created_at DESC" :
+    sort === "newest" ? "inv.created_at DESC" :
+    "inv.due_date ASC NULLS LAST, inv.created_at DESC"; // "due"
+
   const { rows: invoiceRows } = selectedAccountIds.length
     ? await pool.query(
         `SELECT inv.id, inv.vendor, inv.amount, inv.currency, inv.due_date, inv.invoice_number,
@@ -2801,7 +2811,7 @@ app.get("/invoices", async (req, res) => {
          FROM invoices inv
          JOIN accounts a ON a.id = inv.account_id
          WHERE inv.paid = $1 AND inv.account_id = ANY($2)
-         ORDER BY ${showPaid ? "inv.created_at DESC" : "inv.due_date ASC NULLS LAST, inv.created_at DESC"}
+         ORDER BY ${orderBy}
          LIMIT $3 OFFSET $4`,
         [showPaid, selectedAccountIds, PAGE_SIZE, offset]
       )
@@ -2824,6 +2834,7 @@ app.get("/invoices", async (req, res) => {
   function buildInvoiceListUrl(targetPage) {
     const params = new URLSearchParams();
     if (showPaid) params.set("view", "paid");
+    if (sort !== defaultSort) params.set("sort", sort);
     if (req.query.filtered) {
       params.set("filtered", "1");
       for (const id of selectedAccountIds) params.append("accounts", String(id));
@@ -2929,6 +2940,17 @@ app.get("/invoices", async (req, res) => {
     <form method="GET" action="/invoices" id="invoice-filter-form" style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:14px;">
       <input type="hidden" name="filtered" value="1" />
       ${showPaid ? `<input type="hidden" name="view" value="paid" />` : ""}
+      <label style="display:flex; align-items:center; gap:6px; font-size:13.5px;">
+        Sort:
+        <select name="sort" onchange="document.getElementById('invoice-filter-form').submit()"
+          style="padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:13.5px;">
+          <option value="due" ${sort === "due" ? "selected" : ""}>Due soonest</option>
+          <option value="amount_desc" ${sort === "amount_desc" ? "selected" : ""}>Amount: high to low</option>
+          <option value="amount_asc" ${sort === "amount_asc" ? "selected" : ""}>Amount: low to high</option>
+          <option value="vendor" ${sort === "vendor" ? "selected" : ""}>Vendor A-Z</option>
+          <option value="newest" ${sort === "newest" ? "selected" : ""}>Newest added</option>
+        </select>
+      </label>
       ${
         accounts.length > 1
           ? accounts
