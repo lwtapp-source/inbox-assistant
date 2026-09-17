@@ -471,6 +471,12 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
             }
             document.title = doc.title;
             var mainEl = document.querySelector("main.main");
+            // Home's bento grid needs extra width (see .main-wide in styles.css) and
+            // sets that as a class on <main> itself, not inside the swapped innerHTML --
+            // carry it over too, or arriving here via a soft-nav link (rather than a hard
+            // load) leaves whatever class the *previous* page's <main> had, silently
+            // narrowing the bento grid until a real reload resets it.
+            mainEl.className = newMain.className;
             mainEl.innerHTML = newMain.innerHTML;
             runScripts(mainEl);
             if (newSidebar) {
