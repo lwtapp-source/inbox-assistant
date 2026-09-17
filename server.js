@@ -713,7 +713,7 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
 
 async function getAccounts() {
   const { rows } = await pool.query(
-    `SELECT id, email, provider FROM accounts WHERE active = true ORDER BY created_at`
+    `SELECT id, email, provider, timezone FROM accounts WHERE active = true ORDER BY created_at`
   );
   return rows;
 }
@@ -822,7 +822,7 @@ app.get("/", async (req, res) => {
         if (!provider?.listCalendarEvents) return [];
         try {
           const events = await provider.listCalendarEvents(acc, calendarTimeMin, calendarTimeMax);
-          return events.map((e) => ({ ...e, accountEmail: acc.email }));
+          return events.map((e) => ({ ...e, accountEmail: acc.email, accountTimezone: acc.timezone }));
         } catch (err) {
           console.error(`Calendar lookup failed for ${acc.email}:`, err.message);
           return [];
@@ -836,15 +836,20 @@ app.get("/", async (req, res) => {
   const calendarHtml = calendarEvents.length
     ? calendarEvents
         .map((e) => {
+          // Providers return UTC instants -- render them in the account's own timezone
+          // (same as every other date on this app, see priorities/meetings) instead of
+          // the server's, or a 9pm-local event stored as 1am UTC the next day shows up
+          // on the wrong calendar day here.
+          const tz = e.accountTimezone || "America/New_York";
           const start = new Date(e.start);
-          const timeRange = `${start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}${
-            e.end ? ` – ${new Date(e.end).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""
+          const timeRange = `${start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz })}${
+            e.end ? ` – ${new Date(e.end).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz })}` : ""
           }`;
           return `
         <div class="cal-row">
           <div class="cal-date">
-            <div class="cal-date-day">${start.toLocaleDateString("en-US", { day: "numeric" })}</div>
-            <div class="cal-date-month">${start.toLocaleDateString("en-US", { month: "short" })}</div>
+            <div class="cal-date-day">${start.toLocaleDateString("en-US", { day: "numeric", timeZone: tz })}</div>
+            <div class="cal-date-month">${start.toLocaleDateString("en-US", { month: "short", timeZone: tz })}</div>
           </div>
           <div class="cal-body">
             <div class="cal-title">${escapeHtml(e.title) || "(untitled)"}</div>
