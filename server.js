@@ -430,6 +430,14 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
       // fragment jump (see there for why that distinction matters).
       var lastPathAndSearch = window.location.pathname + window.location.search;
 
+      // The browser's own scroll restoration fires as soon as the URL changes on
+      // popstate -- before our fetch-and-swap below has a chance to run -- and since
+      // there's nothing at that scroll offset yet (the old page's DOM is still showing)
+      // it snaps to 0. That spurious scroll event would then clobber our own saved
+      // position (see the "scroll" listener just below, which always records under
+      // whatever lastPathAndSearch currently is). Taking manual control avoids the race.
+      if ("scrollRestoration" in window.history) window.history.scrollRestoration = "manual";
+
       // Soft-nav swaps <main> wholesale rather than letting the browser do a real
       // navigation, so the browser's own scroll restoration on Back/Forward never gets a
       // chance to run -- window.navigate used to always scroll to the top regardless,
