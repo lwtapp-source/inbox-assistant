@@ -430,6 +430,21 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
       // fragment jump (see there for why that distinction matters).
       var lastPathAndSearch = window.location.pathname + window.location.search;
 
+      // Soft-nav swaps <main> wholesale rather than letting the browser do a real
+      // navigation, so the browser's own scroll restoration on Back/Forward never gets a
+      // chance to run -- window.navigate used to always scroll to the top regardless,
+      // which is right when moving to a *new* page but wrong on Back, where you want to
+      // land where you actually were in the list. Recorded continuously (not just at the
+      // moment of navigating away) so it's current however the user leaves the page.
+      var scrollPositions = {};
+      window.addEventListener(
+        "scroll",
+        function () {
+          scrollPositions[lastPathAndSearch] = window.scrollY;
+        },
+        { passive: true }
+      );
+
       window.navigate = function (url, push) {
         if (push === undefined) push = true;
         startProgress();
@@ -456,7 +471,10 @@ async function renderLayout({ title, activeAccountId, accounts, body, activePage
             }
             if (push) window.history.pushState({}, "", url);
             lastPathAndSearch = window.location.pathname + window.location.search;
-            window.scrollTo(0, 0);
+            // A fresh forward navigation (push) always starts at the top, same as a real
+            // page load would. A Back/Forward-triggered one (see the popstate handler)
+            // restores wherever the user was on that page, or the top if we never saw it.
+            window.scrollTo(0, push ? 0 : scrollPositions[lastPathAndSearch] || 0);
             finishProgress();
           })
           .catch(function (err) {

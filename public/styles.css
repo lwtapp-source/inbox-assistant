@@ -1412,7 +1412,10 @@ button[type="submit"].link-button.danger:hover {
   border-top: none;
 }
 
-.priority-row.selected,
+/* Deliberately hover-only, not .selected too -- a row should read as neutral except
+   while the mouse is actually over it. j/k keyboard navigation still tracks a "current"
+   row internally (see selectedIndex in server.js) for d/p/x/enter to act on; it just no
+   longer paints that row a different color when the mouse isn't on it. */
 .priority-row:hover {
   background: var(--accent-wash);
   padding-left: 12px;
