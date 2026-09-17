@@ -1109,6 +1109,43 @@ app.get("/", async (req, res) => {
   res.send(await renderLayout({ title: "Home", activeAccountId: null, accounts, body, activePage: "home" }));
 });
 
+// TEMPORARY one-time migration: backfills received_at for existing urgent/undone rows
+// that predate that column (see the "received_at" commit) by fetching each message's
+// real date from its provider. Idempotent -- only touches rows still missing it -- so
+// safe to hit more than once, but meant to run once and then be deleted from this file.
+app.post("/priorities/backfill-received-dates", async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT pm.id, pm.message_id, pm.account_id, a.provider
+     FROM processed_messages pm
+     JOIN accounts a ON a.id = pm.account_id
+     WHERE pm.label = 'urgent' AND pm.done = false AND pm.received_at IS NULL`
+  );
+
+  let updated = 0;
+  const errors = [];
+  for (const row of rows) {
+    try {
+      const { rows: accountRows } = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [row.account_id]);
+      const account = accountRows[0];
+      const provider = account ? chatProviders[account.provider] : null;
+      if (!account || !provider) continue;
+
+      const detail = await provider.getMessageDetail(account, row.message_id);
+      if (detail.receivedAt) {
+        await pool.query(`UPDATE processed_messages SET received_at = $1 WHERE id = $2`, [
+          detail.receivedAt,
+          row.id,
+        ]);
+        updated++;
+      }
+    } catch (err) {
+      errors.push({ id: row.id, error: err.message });
+    }
+  }
+
+  res.json({ checked: rows.length, updated, errors });
+});
+
 // ---------- Top priorities ----------
 
 app.get("/priorities", async (req, res) => {
@@ -1244,8 +1281,7 @@ app.get("/priorities", async (req, res) => {
               <button type="submit" class="link-button danger" onclick="return confirm('Delete this priority? This only removes it from the dashboard — the original email stays in your inbox.');">Delete</button>
             </form>
           </div>
-        </div>
-        <div class="priority-row-preview" data-preview-for="${p.id}" hidden></div>`
+        </div>`
         )
         .join("")
     : `<div class="empty-state" style="padding:20px 0;">${
@@ -1433,18 +1469,14 @@ app.get("/priorities", async (req, res) => {
                   newBadge.textContent = "Pinned";
                   top.appendChild(newBadge);
                   submitBtn.textContent = "Unpin";
-                  var ownPreview = list.querySelector('.priority-row-preview[data-preview-for="' + row.getAttribute("data-id") + '"]');
                   list.prepend(row);
-                  if (ownPreview) row.insertAdjacentElement("afterend", ownPreview);
                 }
                 if (submitBtn) submitBtn.disabled = false;
                 updateSelectionVisual();
               } else {
                 // done / undone / delete all remove the row from this view
                 var wasSelected = row.classList.contains("selected");
-                var ownPreviewEl = list.querySelector('.priority-row-preview[data-preview-for="' + row.getAttribute("data-id") + '"]');
                 row.remove();
-                if (ownPreviewEl) ownPreviewEl.remove();
                 showEmptyStateIfNeeded();
                 if (wasSelected) selectRow(selectedIndex);
                 else updateSelectionVisual();
@@ -1517,8 +1549,6 @@ app.get("/priorities", async (req, res) => {
             ids.forEach(function (id) {
               var row = list.querySelector('.priority-row[data-id="' + id + '"]');
               if (row) row.remove();
-              var previewEl = list.querySelector('.priority-row-preview[data-preview-for="' + id + '"]');
-              if (previewEl) previewEl.remove();
             });
             showEmptyStateIfNeeded();
             updateBulkToolbar();
@@ -1543,128 +1573,6 @@ app.get("/priorities", async (req, res) => {
           });
         }
 
-        // ---------- hover preview ----------
-        // Shows the message body (fetched fresh, same endpoint the viewer page uses) in
-        // a slot that expands directly under the hovered/selected row itself — anchored
-        // to that specific row, not to the top of the whole list, so it's always exactly
-        // where you're looking and scrolls with that row like any other content. Only
-        // one is open at a time; opening a new one closes whichever was open before.
-        // Exposed on the outer scope (not a plain IIFE) so the j/k keyboard navigation
-        // below can drive the same preview as the currently-selected row changes.
-        var rowPreview = (function () {
-          var previewCache = {};
-          var openEl = null;
-          var openRow = null;
-          var showTimer = null;
-          var hideTimer = null;
-
-          function escapeForHtml(s) {
-            var div = document.createElement("div");
-            div.textContent = s == null ? "" : s;
-            return div.innerHTML;
-          }
-
-          function findPreviewEl(id) {
-            return list.querySelector('.priority-row-preview[data-preview-for="' + id + '"]');
-          }
-
-          // Keeps the row's own highlight (shared with :hover/.selected) applied for as
-          // long as its preview is open — otherwise it'd clear the moment the mouse moves
-          // off the row and onto the preview text below it, breaking the seam between the
-          // two right when you're reading the expanded content.
-          //
-          // list.classList "hovering" pairs with this: a j/k-.selected row keeps its own
-          // highlight permanently, which would otherwise show through *simultaneously*
-          // with whichever different row you're hovering (two rows lit up at once). While
-          // "hovering" is set, CSS suppresses .selected's highlight on every row except
-          // the one currently .expanded; removing "hovering" here (nothing left open)
-          // un-suppresses it, so the persistent selection's color reappears.
-          function close() {
-            if (openRow) openRow.classList.remove("expanded");
-            if (openEl) {
-              openEl.hidden = true;
-              openEl.innerHTML = "";
-            }
-            openEl = null;
-            openRow = null;
-            list.classList.remove("hovering");
-          }
-
-          function scheduleClose() {
-            clearTimeout(hideTimer);
-            hideTimer = setTimeout(close, 200);
-          }
-
-          function render(el, data) {
-            if (data.error) {
-              el.innerHTML = '<div class="hover-preview-error">' + escapeForHtml(data.error) + "</div>";
-              return;
-            }
-            // Subject/from/account/date are already shown in the row itself right above
-            // this — repeating them here would just be a second header on top of the
-            // same text the user is already looking at.
-            el.innerHTML = '<div class="hover-preview-body">' + escapeForHtml(data.body || "(empty message)") + "</div>";
-          }
-
-          function showFor(row) {
-            if (!row) return;
-            var id = row.getAttribute("data-id");
-            if (!id) return;
-            var el = findPreviewEl(id);
-            if (!el) return;
-
-            if (openEl && openEl !== el) {
-              openEl.hidden = true;
-              openEl.innerHTML = "";
-              if (openRow) openRow.classList.remove("expanded");
-            }
-            openEl = el;
-            openRow = row;
-            row.classList.add("expanded");
-            list.classList.add("hovering");
-            el.hidden = false;
-            el.dataset.forId = id;
-
-            if (previewCache[id]) {
-              render(el, previewCache[id]);
-              return;
-            }
-
-            el.innerHTML = '<div class="hover-preview-body">Loading…</div>';
-            fetch("/priorities/" + id + "/preview")
-              .then(function (res) { return res.json(); })
-              .then(function (data) {
-                if (!data.ok) throw new Error("Not found");
-                previewCache[id] = data;
-                if (el.dataset.forId === id) render(el, data);
-              })
-              .catch(function () {
-                if (el.dataset.forId === id) {
-                  el.innerHTML = '<div class="hover-preview-error">Could not load a preview.</div>';
-                }
-              });
-          }
-
-          list.querySelectorAll(".priority-row").forEach(function (row) {
-            row.addEventListener("mouseenter", function () {
-              clearTimeout(hideTimer);
-              clearTimeout(showTimer);
-              showTimer = setTimeout(function () { showFor(row); }, 350);
-            });
-            row.addEventListener("mouseleave", function () {
-              clearTimeout(showTimer);
-              scheduleClose();
-            });
-          });
-
-          list.querySelectorAll(".priority-row-preview").forEach(function (el) {
-            el.addEventListener("mouseenter", function () { clearTimeout(hideTimer); });
-            el.addEventListener("mouseleave", scheduleClose);
-          });
-
-          return { showFor: showFor };
-        })();
-
         // ---------- keyboard navigation (j/k/d/p/x/enter) ----------
         var selectedIndex = 0;
 
@@ -1685,7 +1593,6 @@ app.get("/priorities", async (req, res) => {
           selectedIndex = Math.max(0, Math.min(index, rows.length - 1));
           updateSelectionVisual();
           rows[selectedIndex].scrollIntoView({ block: "nearest" });
-          rowPreview.showFor(rows[selectedIndex]);
         }
 
         function currentRow() {
@@ -1753,9 +1660,8 @@ function isAjax(req) {
   return req.get("X-Requested-With") === "fetch";
 }
 
-// Shared by the full-page viewer (GET /priorities/:id/view) and the hover-preview
-// endpoint (GET /priorities/:id/preview) — fetches the body fresh from the provider
-// rather than storing it, same reasoning as the viewer route below.
+// Used by the full-page viewer (GET /priorities/:id/view) — fetches the body fresh from
+// the provider rather than storing it, same reasoning as the viewer route below.
 async function fetchPriorityBody(pm) {
   const { rows: accountRows } = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [pm.account_id]);
   const account = accountRows[0];
@@ -1933,32 +1839,6 @@ app.get("/priorities/:id/view", async (req, res) => {
   `;
 
   res.send(await renderLayout({ title: pm.subject || "Message", activeAccountId: null, accounts, body, activePage: "priorities" }));
-});
-
-// JSON counterpart to the viewer, for the Top Priorities list's hover-to-preview card —
-// same body-fetch as the full page, without a page navigation.
-app.get("/priorities/:id/preview", async (req, res) => {
-  const { rows } = await pool.query(
-    `SELECT pm.*, a.email AS account_email, a.timezone AS account_timezone
-     FROM processed_messages pm
-     JOIN accounts a ON a.id = pm.account_id
-     WHERE pm.id = $1`,
-    [req.params.id]
-  );
-  const pm = rows[0];
-  if (!pm) return res.status(404).json({ ok: false, error: "Not found" });
-
-  const { bodyText, fetchError } = await fetchPriorityBody(pm);
-  res.json({
-    ok: true,
-    subject: pm.subject || "(no subject)",
-    fromAddress: pm.from_address || "",
-    accountEmail: pm.account_email || "",
-    processedAt: pm.processed_at,
-    timezone: pm.account_timezone || "America/New_York",
-    body: bodyText,
-    error: fetchError,
-  });
 });
 
 app.post("/priorities/:id/done", async (req, res) => {

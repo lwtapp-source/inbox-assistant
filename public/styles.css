@@ -401,42 +401,6 @@ body {
   display: none;
 }
 
-/* One of these sits right after each .priority-row (see server.js) and expands in place
-   when that row is hovered/selected — anchored to that specific row, not a floating card
-   (which stayed put in the viewport while the row scrolled away underneath it, visually
-   detaching the two) and not a single panel docked at the top of the list (which was
-   anchored to the list, not to whichever row you were actually looking at). Being the
-   row's own next sibling, it scrolls with that exact row like any other content.
-
-   Styled to read as the row itself continuing, not a separate box: same background as
-   the row's own hover/selected highlight, same horizontal bleed, no border or shadow of
-   its own, and square top corners (see .priority-row.expanded) so there's no visible
-   seam where the row ends and this begins. */
-.priority-row-preview {
-  max-height: 320px;
-  overflow-y: auto;
-  background: var(--accent-wash);
-  border-radius: 0 0 var(--radius) var(--radius);
-  padding: 0 12px 14px;
-  margin: -6px -12px 12px;
-}
-
-.priority-row-preview[hidden] {
-  display: none;
-}
-
-.hover-preview-body {
-  white-space: pre-wrap;
-  font-size: 13.5px;
-  line-height: 1.5;
-  color: var(--ink);
-}
-
-.hover-preview-error {
-  color: var(--error-ink);
-  font-size: 13.5px;
-}
-
 .cmdk-box {
   width: 100%;
   max-width: 520px;
@@ -1449,39 +1413,13 @@ button[type="submit"].link-button.danger:hover {
 }
 
 .priority-row.selected,
-.priority-row:hover,
-.priority-row.expanded {
+.priority-row:hover {
   background: var(--accent-wash);
   padding-left: 12px;
   padding-right: 12px;
   margin-left: -12px;
   margin-right: -12px;
-}
-
-.priority-row.selected,
-.priority-row:hover {
   border-radius: var(--radius);
-}
-
-/* When a row's preview is open, its own bottom corners stay square so the row and its
-   preview below read as one continuous shape instead of two stacked, separately-rounded
-   boxes with a pinched seam between them. */
-.priority-row.expanded {
-  border-radius: var(--radius) var(--radius) 0 0;
-}
-
-/* A j/k-.selected row's highlight is permanent, which would otherwise show through at
-   the same time as whichever different row is currently being hovered/expanded — two
-   rows lit up at once. While something is expanded (.priority-list.hovering, toggled in
-   server.js alongside .expanded), suppress .selected's highlight on every row except the
-   one actually expanded; only one row is ever highlighted at a time. */
-.priority-list.hovering .priority-row.selected:not(.expanded) {
-  background: none;
-  border-radius: 0;
-  padding-left: 0;
-  padding-right: 0;
-  margin-left: 0;
-  margin-right: 0;
 }
 
 .keyboard-hint {
