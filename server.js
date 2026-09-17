@@ -1109,43 +1109,6 @@ app.get("/", async (req, res) => {
   res.send(await renderLayout({ title: "Home", activeAccountId: null, accounts, body, activePage: "home" }));
 });
 
-// TEMPORARY one-time migration: backfills received_at for existing urgent/undone rows
-// that predate that column (see the "received_at" commit) by fetching each message's
-// real date from its provider. Idempotent -- only touches rows still missing it -- so
-// safe to hit more than once, but meant to run once and then be deleted from this file.
-app.post("/priorities/backfill-received-dates", async (req, res) => {
-  const { rows } = await pool.query(
-    `SELECT pm.id, pm.message_id, pm.account_id, a.provider
-     FROM processed_messages pm
-     JOIN accounts a ON a.id = pm.account_id
-     WHERE pm.label = 'urgent' AND pm.done = false AND pm.received_at IS NULL`
-  );
-
-  let updated = 0;
-  const errors = [];
-  for (const row of rows) {
-    try {
-      const { rows: accountRows } = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [row.account_id]);
-      const account = accountRows[0];
-      const provider = account ? chatProviders[account.provider] : null;
-      if (!account || !provider) continue;
-
-      const detail = await provider.getMessageDetail(account, row.message_id);
-      if (detail.receivedAt) {
-        await pool.query(`UPDATE processed_messages SET received_at = $1 WHERE id = $2`, [
-          detail.receivedAt,
-          row.id,
-        ]);
-        updated++;
-      }
-    } catch (err) {
-      errors.push({ id: row.id, error: err.message });
-    }
-  }
-
-  res.json({ checked: rows.length, updated, errors });
-});
-
 // ---------- Top priorities ----------
 
 app.get("/priorities", async (req, res) => {
