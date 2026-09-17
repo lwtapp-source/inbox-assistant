@@ -729,7 +729,7 @@ app.get("/", async (req, res) => {
      FROM processed_messages pm
      JOIN accounts a ON a.id = pm.account_id
      WHERE pm.label = 'urgent' AND pm.done = false
-     ORDER BY pm.pinned DESC, pm.processed_at DESC
+     ORDER BY pm.pinned DESC, COALESCE(pm.received_at, pm.processed_at) DESC
      LIMIT 4`
   );
   const { rows: [invoiceSummary] } = await pool.query(
@@ -1135,15 +1135,18 @@ app.get("/priorities", async (req, res) => {
   const VALID_SORTS = ["pinned", "newest", "oldest"];
   const defaultSort = showDone ? "newest" : "pinned";
   const sort = VALID_SORTS.includes(req.query.sort) ? req.query.sort : defaultSort;
+  // "Newest"/"Oldest" sort and the date shown on each row both use the email's actual
+  // received_at when we have it -- processed_at (when we classified it, not when it
+  // arrived) is only a fallback for rows from before that column existed.
   const orderBy =
-    sort === "newest" ? "pm.processed_at DESC" :
-    sort === "oldest" ? "pm.processed_at ASC" :
-    "pm.pinned DESC, pm.processed_at DESC"; // "pinned"
+    sort === "newest" ? "COALESCE(pm.received_at, pm.processed_at) DESC" :
+    sort === "oldest" ? "COALESCE(pm.received_at, pm.processed_at) ASC" :
+    "pm.pinned DESC, COALESCE(pm.received_at, pm.processed_at) DESC"; // "pinned"
 
   const { rows: priorities } = selectedAccountIds.length
     ? await pool.query(
         `SELECT pm.id, pm.subject, pm.from_address, pm.snippet, pm.web_link, pm.pinned, pm.draft_created,
-                pm.processed_at, a.email AS account_email, a.provider AS account_provider,
+                pm.processed_at, pm.received_at, a.email AS account_email, a.provider AS account_provider,
                 a.timezone AS account_timezone
          FROM processed_messages pm
          JOIN accounts a ON a.id = pm.account_id
@@ -1202,7 +1205,7 @@ app.get("/priorities", async (req, res) => {
               <span class="priority-subject">${escapeHtml(p.subject) || "(no subject)"}</span>
               ${p.pinned ? `<span class="pin-badge">Pinned</span>` : ""}
             </div>
-            <div class="priority-meta">${escapeHtml(p.from_address)} · ${escapeHtml(p.account_email)} · ${new Date(p.processed_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: p.account_timezone || "America/New_York" })}</div>
+            <div class="priority-meta">${escapeHtml(p.from_address)} · ${escapeHtml(p.account_email)} · ${new Date(p.received_at || p.processed_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: p.account_timezone || "America/New_York" })}</div>
             ${p.snippet ? `<div class="priority-snippet">${escapeHtml(p.snippet)}</div>` : ""}
           </div>
           <div class="priority-actions">
@@ -1797,9 +1800,9 @@ app.get("/priorities/:id/view", async (req, res) => {
   const defaultSort = showDone ? "newest" : "pinned";
   const sort = VALID_SORTS.includes(req.query.sort) ? req.query.sort : defaultSort;
   const orderBy =
-    sort === "newest" ? "pm.processed_at DESC" :
-    sort === "oldest" ? "pm.processed_at ASC" :
-    "pm.pinned DESC, pm.processed_at DESC";
+    sort === "newest" ? "COALESCE(pm.received_at, pm.processed_at) DESC" :
+    sort === "oldest" ? "COALESCE(pm.received_at, pm.processed_at) ASC" :
+    "pm.pinned DESC, COALESCE(pm.received_at, pm.processed_at) DESC";
 
   const contextParams = new URLSearchParams();
   if (showDone) contextParams.set("view", "done");
@@ -1877,7 +1880,7 @@ app.get("/priorities/:id/view", async (req, res) => {
       </div>
     </div>
     <h1>${escapeHtml(pm.subject) || "(no subject)"}</h1>
-    <p class="priority-meta">${escapeHtml(pm.from_address)} · ${escapeHtml(pm.account_email)} · ${new Date(pm.processed_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: pm.account_timezone || "America/New_York" })}</p>
+    <p class="priority-meta">${escapeHtml(pm.from_address)} · ${escapeHtml(pm.account_email)} · ${new Date(pm.received_at || pm.processed_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: pm.account_timezone || "America/New_York" })}</p>
 
     <div class="priority-actions no-print" style="margin:16px 0 20px;">
       <button type="button" class="link-button" onclick="window.print()">Print</button>

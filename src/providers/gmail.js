@@ -129,6 +129,9 @@ export async function getMessageDetail(account, id) {
     messageIdHeader: headers["message-id"],
     webLink: `https://mail.google.com/mail/u/0/#all/${full.data.id}`,
     pdfAttachments: findPdfAttachmentRefs(full.data.payload),
+    // internalDate is epoch ms as a string -- when Gmail actually received the message,
+    // not when we got around to processing it.
+    receivedAt: full.data.internalDate ? new Date(Number(full.data.internalDate)).toISOString() : null,
   };
 }
 

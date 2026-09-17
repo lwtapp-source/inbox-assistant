@@ -115,6 +115,12 @@ export async function initSchema() {
     ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS web_link TEXT;
     ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS pinned BOOLEAN DEFAULT false;
     ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS done BOOLEAN DEFAULT false;
+    -- When the email itself was sent/received, distinct from processed_at (when *we*
+    -- classified it) -- a backlog or a delayed poll cycle can process a message well
+    -- after it actually arrived, which made Top Priorities show "today" for email that
+    -- was days old. Nullable: existing rows predate this column and fall back to
+    -- processed_at wherever it's read (see server.js).
+    ALTER TABLE processed_messages ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ;
 
     CREATE TABLE IF NOT EXISTS follow_ups (
       id SERIAL PRIMARY KEY,

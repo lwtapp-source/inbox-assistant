@@ -195,8 +195,8 @@ export async function pollAccount(account) {
     if (isNoLabelSender(detail.from, account.no_label_senders)) {
       await pool.query(
         `INSERT INTO processed_messages
-           (account_id, message_id, label, draft_created, subject, from_address, snippet, web_link, thread_key)
-         VALUES ($1, $2, NULL, false, $3, $4, $5, $6, $7)`,
+           (account_id, message_id, label, draft_created, subject, from_address, snippet, web_link, thread_key, received_at)
+         VALUES ($1, $2, NULL, false, $3, $4, $5, $6, $7, $8)`,
         [
           account.id,
           id,
@@ -205,6 +205,7 @@ export async function pollAccount(account) {
           detail.snippet ?? "",
           detail.webLink ?? "",
           detail.threadId || detail.conversationId || null,
+          detail.receivedAt || null,
         ]
       );
       handled++;
@@ -284,8 +285,8 @@ export async function pollAccount(account) {
 
     await pool.query(
       `INSERT INTO processed_messages
-         (account_id, message_id, label, draft_created, subject, from_address, snippet, web_link, thread_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         (account_id, message_id, label, draft_created, subject, from_address, snippet, web_link, thread_key, received_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         account.id,
         id,
@@ -296,6 +297,7 @@ export async function pollAccount(account) {
         detail.snippet ?? "",
         detail.webLink ?? "",
         detail.threadId || detail.conversationId || null,
+        detail.receivedAt || null,
       ]
     );
 

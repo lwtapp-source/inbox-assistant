@@ -142,7 +142,7 @@ export async function getThreadContext(account, detail) {
 
 export async function getMessageDetail(account, id) {
   const params = new URLSearchParams({
-    $select: "subject,from,bodyPreview,body,conversationId,internetMessageId,webLink,hasAttachments",
+    $select: "subject,from,bodyPreview,body,conversationId,internetMessageId,webLink,hasAttachments,receivedDateTime",
   });
   const m = await graphFetch(account, `/me/messages/${id}?${params}`);
   return {
@@ -154,6 +154,8 @@ export async function getMessageDetail(account, id) {
     messageIdHeader: m.internetMessageId,
     webLink: m.webLink ?? "",
     hasAttachments: !!m.hasAttachments,
+    // When Outlook actually received the message, not when we got around to processing it.
+    receivedAt: m.receivedDateTime || null,
     _graphId: id,
   };
 }
