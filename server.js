@@ -2794,6 +2794,9 @@ app.get("/invoices", async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const offset = (page - 1) * PAGE_SIZE;
 
+  const q = (req.query.q || "").trim();
+  const groupByVendor = req.query.group === "1";
+
   const VALID_SORTS = ["due", "amount_desc", "amount_asc", "vendor", "newest"];
   const defaultSort = showPaid ? "newest" : "due";
   const sort = VALID_SORTS.includes(req.query.sort) ? req.query.sort : defaultSort;
@@ -2804,42 +2807,69 @@ app.get("/invoices", async (req, res) => {
     sort === "newest" ? "inv.created_at DESC" :
     "inv.due_date ASC NULLS LAST, inv.created_at DESC"; // "due"
 
+  // Grouping rolls up every matching invoice under its vendor rather than paginating a
+  // flat list, so it fetches everything that matches the filters (no LIMIT/OFFSET) --
+  // capped well above what one vendor relationship realistically produces, just as a
+  // safety valve against an unbounded query.
+  const GROUP_FETCH_CAP = 2000;
+  const searchParam = q ? [`%${q}%`] : [];
+
   const { rows: invoiceRows } = selectedAccountIds.length
     ? await pool.query(
         `SELECT inv.id, inv.vendor, inv.amount, inv.currency, inv.due_date, inv.invoice_number,
                 inv.subject, inv.web_link, a.email AS account_email
          FROM invoices inv
          JOIN accounts a ON a.id = inv.account_id
-         WHERE inv.paid = $1 AND inv.account_id = ANY($2)
+         WHERE inv.paid = $1 AND inv.account_id = ANY($2) ${q ? "AND (inv.vendor ILIKE $5 OR inv.subject ILIKE $5)" : ""}
          ORDER BY ${orderBy}
          LIMIT $3 OFFSET $4`,
-        [showPaid, selectedAccountIds, PAGE_SIZE, offset]
+        groupByVendor
+          ? [showPaid, selectedAccountIds, GROUP_FETCH_CAP, 0, ...searchParam]
+          : [showPaid, selectedAccountIds, PAGE_SIZE, offset, ...searchParam]
       )
     : { rows: [] };
 
   const {
-    rows: [{ count: totalCount, total: totalAmount }],
+    rows: [{ count: totalCount, total: totalAmount, overdue_count: overdueCount }],
   } = selectedAccountIds.length
     ? await pool.query(
-        `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount), 0)::float AS total
-         FROM invoices inv WHERE inv.paid = $1 AND inv.account_id = ANY($2)`,
-        [showPaid, selectedAccountIds]
+        `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount), 0)::float AS total,
+                COUNT(*) FILTER (WHERE due_date < now())::int AS overdue_count
+         FROM invoices inv WHERE inv.paid = $1 AND inv.account_id = ANY($2) ${q ? "AND (inv.vendor ILIKE $3 OR inv.subject ILIKE $3)" : ""}`,
+        [showPaid, selectedAccountIds, ...searchParam]
       )
-    : { rows: [{ count: 0, total: 0 }] };
+    : { rows: [{ count: 0, total: 0, overdue_count: 0 }] };
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const totalPages = groupByVendor ? 1 : Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const rangeStart = totalCount === 0 ? 0 : offset + 1;
-  const rangeEnd = Math.min(offset + PAGE_SIZE, totalCount);
+  const rangeEnd = groupByVendor ? totalCount : Math.min(offset + PAGE_SIZE, totalCount);
 
   function buildInvoiceListUrl(targetPage) {
     const params = new URLSearchParams();
     if (showPaid) params.set("view", "paid");
     if (sort !== defaultSort) params.set("sort", sort);
+    if (q) params.set("q", q);
+    if (groupByVendor) params.set("group", "1");
     if (req.query.filtered) {
       params.set("filtered", "1");
       for (const id of selectedAccountIds) params.append("accounts", String(id));
     }
     if (targetPage > 1) params.set("page", String(targetPage));
+    const qs = params.toString();
+    return qs ? `/invoices?${qs}` : "/invoices";
+  }
+
+  function buildInvoiceListUrlWithout(omitKey) {
+    const params = new URLSearchParams();
+    if (showPaid) params.set("view", "paid");
+    if (sort !== defaultSort) params.set("sort", sort);
+    if (q) params.set("q", q);
+    if (groupByVendor) params.set("group", "1");
+    if (req.query.filtered) {
+      params.set("filtered", "1");
+      for (const id of selectedAccountIds) params.append("accounts", String(id));
+    }
+    params.delete(omitKey);
     const qs = params.toString();
     return qs ? `/invoices?${qs}` : "/invoices";
   }
@@ -2855,16 +2885,24 @@ app.get("/invoices", async (req, res) => {
 
   const isOverdue = (dueDate) => dueDate && new Date(dueDate) < new Date();
 
-  const invoiceListHtml = invoiceRows.length
-    ? invoiceRows
-        .map(
-          (inv) => `
+  function renderInvoiceRow(inv) {
+    // A negative amount is a credit/refund, not a bill -- flagging it distinctly (rather
+    // than just showing "-$12.34" next to everything else styled as money owed) makes it
+    // obvious at a glance instead of reading like a parsing mistake.
+    const isCredit = inv.amount !== null && inv.amount < 0;
+    const amountBadge =
+      inv.amount === null
+        ? ""
+        : isCredit
+        ? `<span class="pin-badge" style="background:color-mix(in srgb, var(--fyi) 15%, transparent); color:var(--fyi);">Credit ${fmtAmount(Math.abs(inv.amount), inv.currency)}</span>`
+        : `<span class="pin-badge" style="background:var(--accent-wash); color:var(--accent-dark);">${fmtAmount(inv.amount, inv.currency)}</span>`;
+    return `
         <div class="priority-row" data-id="${inv.id}">
           <input type="checkbox" class="bulk-select" aria-label="Select this invoice" style="margin-top:3px;" />
           <div class="priority-main">
             <div class="priority-top">
               <span class="priority-subject">${escapeHtml(inv.vendor) || escapeHtml(inv.subject) || "(unknown vendor)"}</span>
-              ${inv.amount !== null ? `<span class="pin-badge" style="background:var(--accent-wash); color:var(--accent-dark);">${fmtAmount(inv.amount, inv.currency)}</span>` : ""}
+              ${amountBadge}
               ${!showPaid && isOverdue(inv.due_date) ? `<span class="pin-badge">Overdue</span>` : ""}
             </div>
             <div class="priority-meta">
@@ -2903,12 +2941,59 @@ app.get("/invoices", async (req, res) => {
               <button type="submit" class="link-button danger" onclick="return confirm('Delete this invoice? This only removes it from tracking here — the original email stays in your inbox.');">Delete</button>
             </form>
           </div>
-        </div>`
+        </div>`;
+  }
+
+  // Grouped mode rolls the (unpaginated) full result set up under each vendor, sorted
+  // the same way the flat list would be but at the group level -- e.g. "Amount high to
+  // low" sorts groups by their subtotal, not by any one invoice's amount. Reuses
+  // renderInvoiceRow for the rows nested inside, so bulk-select (which just queries
+  // ".priority-row" anywhere in the list) keeps working without changes.
+  function buildVendorGroups() {
+    const groups = new Map();
+    for (const inv of invoiceRows) {
+      const key = inv.vendor || inv.subject || "(unknown vendor)";
+      if (!groups.has(key)) groups.set(key, { vendor: key, rows: [], total: 0, currency: inv.currency || "USD" });
+      const g = groups.get(key);
+      g.rows.push(inv);
+      if (inv.amount !== null) g.total += inv.amount;
+    }
+    const list = Array.from(groups.values());
+    list.sort((a, b) => {
+      if (sort === "amount_desc") return b.total - a.total;
+      if (sort === "amount_asc") return a.total - b.total;
+      if (sort === "newest") return 0; // rows within are already newest-first; group order follows first appearance
+      if (sort === "due") {
+        const aDue = a.rows.reduce((min, r) => (r.due_date && (!min || new Date(r.due_date) < min) ? new Date(r.due_date) : min), null);
+        const bDue = b.rows.reduce((min, r) => (r.due_date && (!min || new Date(r.due_date) < min) ? new Date(r.due_date) : min), null);
+        if (!aDue && !bDue) return 0;
+        if (!aDue) return 1;
+        if (!bDue) return -1;
+        return aDue - bDue;
+      }
+      return a.vendor.localeCompare(b.vendor); // "vendor"
+    });
+    return list;
+  }
+
+  const invoiceListHtml = !invoiceRows.length
+    ? `<div class="empty-state" style="padding:20px 0;">${
+        showPaid ? "No paid invoices yet." : "No unpaid invoices right now."
+      }</div>`
+    : groupByVendor
+    ? buildVendorGroups()
+        .map(
+          (g) => `
+        <details class="invoice-vendor-group" open>
+          <summary style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; cursor:pointer; border-bottom:1px solid var(--border);">
+            <span><strong>${escapeHtml(g.vendor)}</strong> <span class="section-help" style="margin:0;">(${g.rows.length})</span></span>
+            <span class="pin-badge" style="background:var(--accent-wash); color:var(--accent-dark);">${fmtAmount(g.total, g.currency)}</span>
+          </summary>
+          <div style="padding-left:4px;">${g.rows.map(renderInvoiceRow).join("")}</div>
+        </details>`
         )
         .join("")
-    : `<div class="empty-state" style="padding:20px 0;">${
-        showPaid ? "No paid invoices yet." : "No unpaid invoices right now."
-      }</div>`;
+    : invoiceRows.map(renderInvoiceRow).join("");
 
   const body = `
     <h1>${showPaid ? "Paid invoices" : "Invoices"}</h1>
@@ -2951,6 +3036,15 @@ app.get("/invoices", async (req, res) => {
           <option value="newest" ${sort === "newest" ? "selected" : ""}>Newest added</option>
         </select>
       </label>
+      <input type="search" name="q" value="${escapeHtml(q)}" placeholder="Search vendor or subject…"
+        style="padding:6px 8px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:13.5px; width:200px;" />
+      <button type="submit" style="padding:6px 12px; font-size:13.5px;">Search</button>
+      ${q ? `<a href="${buildInvoiceListUrlWithout("q")}" style="font-size:13.5px;">Clear search</a>` : ""}
+      <label style="display:flex; align-items:center; gap:6px; font-size:13.5px; cursor:pointer;">
+        <input type="checkbox" name="group" value="1" ${groupByVendor ? "checked" : ""}
+          onchange="document.getElementById('invoice-filter-form').submit()" />
+        Group by vendor
+      </label>
       ${
         accounts.length > 1
           ? accounts
@@ -2981,7 +3075,9 @@ app.get("/invoices", async (req, res) => {
           ${
             totalCount === 0
               ? ""
-              : `Showing ${rangeStart}-${rangeEnd} of ${totalCount} · ${fmtAmount(totalAmount, "USD")} ${showPaid ? "paid" : "due"}`
+              : `Showing ${rangeStart}-${rangeEnd} of ${totalCount} · ${fmtAmount(totalAmount, "USD")} ${showPaid ? "paid" : "due"}${
+                  !showPaid && overdueCount ? ` · ${overdueCount} overdue` : ""
+                }`
           }
         </span>
         <span id="invoice-bulk-toolbar" class="bulk-toolbar" hidden>
