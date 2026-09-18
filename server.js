@@ -2064,7 +2064,7 @@ app.get("/meetings", async (req, res) => {
                </select>
                <input type="text" id="record-title" placeholder="Meeting title (optional)" style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px; min-width:200px;" />
                <button type="button" id="record-start-btn">🎙️ Start recording</button>
-               <button type="button" id="record-stop-btn" style="display:none; background:var(--urgent);">⏹ Stop &amp; upload</button>
+               <button type="button" id="record-stop-btn" style="display:none; background:var(--urgent);">⏹ Stop, save &amp; upload</button>
                <span class="section-help" style="margin:0; display:flex; align-items:center; gap:6px;">
                  <span id="record-dot" class="record-dot" hidden></span>
                  <span id="record-status"></span>
@@ -2074,7 +2074,7 @@ app.get("/meetings", async (req, res) => {
 
            <div class="section" style="margin-top:4px; margin-bottom:20px;">
              <h2 style="font-size:16px;">Or upload an existing recording</h2>
-             <p class="section-help">Any audio or video file — same transcription pipeline as above, just skips the live recording.</p>
+             <p class="section-help">Any audio or video file — same transcription pipeline as above, just skips the live recording. Live recordings also save a copy to your Downloads folder when you stop, so a failed upload can be re-submitted here.</p>
              <form method="POST" action="/meetings/record" enctype="multipart/form-data" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                <input type="hidden" name="via" value="upload" />
                <select name="account_id" required style="padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius); font-family:inherit; font-size:14px;">
@@ -2272,6 +2272,29 @@ app.get("/meetings", async (req, res) => {
           mediaRecorder.addEventListener("stop", async () => {
             try {
               const blob = new Blob(chunks, { type: "audio/webm" });
+
+              // Save a local copy first, before the upload: if the upload or transcription
+              // fails, this file is the only copy of the audio (nothing is stored server-side)
+              // and can be re-submitted later via "upload an existing recording".
+              try {
+                const titleText = document.getElementById("record-title").value.trim();
+                const slug = titleText.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+                const now = new Date();
+                const pad = (n) => String(n).padStart(2, "0");
+                const stamp =
+                  now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate()) +
+                  "_" + pad(now.getHours()) + "-" + pad(now.getMinutes());
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.download = "sift-" + (slug ? slug + "-" : "") + stamp + ".webm";
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+              } catch (saveErr) {
+                console.error("Couldn't save a local copy of the recording:", saveErr);
+              }
+
               const form = new FormData();
               form.append("audio", blob, "recording.webm");
               form.append("account_id", accountId);
